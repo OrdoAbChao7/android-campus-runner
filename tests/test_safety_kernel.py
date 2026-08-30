@@ -172,3 +172,35 @@ def test_evidence_writer_redacts_sensitive_values_from_events_and_snapshots(tmp_
     assert "snapshot-token" not in artifacts
     assert "snapshot-credential" not in artifacts
     assert "Campus Run" in artifacts
+
+
+def test_evidence_writer_redacts_quoted_values_exception_text_and_event_name(tmp_path):
+    """Quoted secrets and exception arguments cannot escape through generic text fields."""
+    writer = EvidenceWriter(tmp_path, "run-004")
+
+    writer.append_event(
+        "provider-token-secret",
+        {
+            "message": "token: 'secret value' while opening Campus Run",
+            "exception": KeyError("secret-token"),
+            "status": "provider unavailable",
+        },
+    )
+    snapshot_path = writer.write_snapshot(
+        "provider-state",
+        {
+            "details": "credential = 'snapshot credential value'",
+            "error": KeyError("snapshot-secret-token"),
+            "visible_text": "Campus Run",
+        },
+    )
+
+    artifacts = (tmp_path / "run-004" / "events.jsonl").read_text(encoding="utf-8") + snapshot_path.read_text(encoding="utf-8")
+    assert "provider-token-secret" not in artifacts
+    assert "secret value" not in artifacts
+    assert "value'" not in artifacts
+    assert "secret-token" not in artifacts
+    assert "snapshot credential value" not in artifacts
+    assert "snapshot-secret-token" not in artifacts
+    assert "provider unavailable" in artifacts
+    assert "Campus Run" in artifacts

@@ -17,9 +17,14 @@ _SENSITIVE_KEY = re.compile(
 )
 _SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 _REDACTED = "[REDACTED]"
-_BEARER_VALUE = re.compile(r"\bBearer\s+[^\s,;]+", re.IGNORECASE)
+_SECRET_LABEL = r"password|passwd|secret|token|authorization|cookie|credential|api[-_ ]?key|access[-_ ]?key"
+_BEARER_VALUE = re.compile(r"\bBearer\s+(?:(['\"]).*?\1|[^\s,;]+)", re.IGNORECASE)
+_QUOTED_NAMED_SECRET_VALUE = re.compile(
+    rf"\b(?P<label>{_SECRET_LABEL})\s*(?P<separator>[:=])\s*(?P<quote>['\"])(?P<value>.*?)(?P=quote)",
+    re.IGNORECASE,
+)
 _NAMED_SECRET_VALUE = re.compile(
-    r"\b(?P<label>password|passwd|secret|token|authorization|cookie|credential|api[-_ ]?key|access[-_ ]?key)"
+    rf"\b(?P<label>{_SECRET_LABEL})"
     r"\s*(?P<separator>[:=])\s*[^\s,;]+",
     re.IGNORECASE,
 )
@@ -27,15 +32,30 @@ _SPACED_SECRET_VALUE = re.compile(
     r"\b(?P<label>secret|token|credential)\s+[^\s,;]+",
     re.IGNORECASE,
 )
+_SENSITIVE_FRAGMENT = re.compile(
+    rf"[A-Za-z0-9_.-]*(?:{_SECRET_LABEL})[A-Za-z0-9_.-]*",
+    re.IGNORECASE,
+)
 
 
 def _sanitize_text(value: str) -> str:
     value = _BEARER_VALUE.sub(f"Bearer {_REDACTED}", value)
+    value = _QUOTED_NAMED_SECRET_VALUE.sub(
+        lambda match: f"{match.group('label')}{match.group('separator')}{_REDACTED}",
+        value,
+    )
     value = _NAMED_SECRET_VALUE.sub(
         lambda match: f"{match.group('label')}{match.group('separator')}{_REDACTED}",
         value,
     )
-    return _SPACED_SECRET_VALUE.sub(lambda match: f"{match.group('label')} {_REDACTED}", value)
+    value = _SPACED_SECRET_VALUE.sub(lambda match: f"{match.group('label')} {_REDACTED}", value)
+    return _SENSITIVE_FRAGMENT.sub(_REDACTED, value)
+
+
+def _sanitize_event_name(event: str) -> str:
+    if _SENSITIVE_KEY.search(event):
+        return "redacted_event"
+    return _sanitize_text(event)
 
 
 def sanitize_evidence(value: Any) -> Any:
@@ -49,11 +69,13 @@ def sanitize_evidence(value: Any) -> Any:
         return [sanitize_evidence(item) for item in value]
     if isinstance(value, datetime):
         return value.isoformat()
+    if isinstance(value, BaseException):
+        return {"exception_type": type(value).__name__, "message": _REDACTED}
     if isinstance(value, str):
         return _sanitize_text(value)
     if value is None or isinstance(value, int | float | bool):
         return value
-    return _sanitize_text(str(value))
+    return {"type": type(value).__name__, "value": _REDACTED}
 
 
 class EvidenceWriter:
@@ -72,7 +94,7 @@ class EvidenceWriter:
             raise ValueError("event is required")
         record = {
             "timestamp": datetime.now(UTC).isoformat(),
-            "event": event,
+            "event": _sanitize_event_name(event),
             "payload": sanitize_evidence(payload or {}),
         }
         line = json.dumps(record, ensure_ascii=False, sort_keys=True)
@@ -83,6 +105,8 @@ class EvidenceWriter:
     def write_snapshot(self, name: str, payload: dict[str, object]) -> Path:
         if not _SAFE_NAME.fullmatch(name):
             raise ValueError("snapshot name must be a simple file name")
+        if _SENSITIVE_KEY.search(name):
+            raise ValueError("snapshot name must not contain sensitive terms")
         path = self.run_dir / f"{name}.json"
         document = {
             "captured_at": datetime.now(UTC).isoformat(),
