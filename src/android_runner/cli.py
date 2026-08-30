@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from pathlib import Path
 
 import yaml
 
+from .accounts import load_accounts, ordered_enterprises
+from .device import AndroidDevice
 from .doctor import format_report, run_doctor
 from .location.provider import GpsLocatorProvider
+from .runner import run_multi_account_mvp
 from .workflow import run_route_with_cleanup
 
 
@@ -23,21 +27,65 @@ def load_provider_config(path: str | Path) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="android-runner")
+    parser.add_argument("--verbose", "-v", action="store_true", help="enable debug logging")
     sub = parser.add_subparsers(dest="command", required=True)
+
     doctor = sub.add_parser("doctor")
     doctor.add_argument("--adb", default=DEFAULT_ADB)
+
     route = sub.add_parser("run-route", help="prepare GPS Locator, run a GPX/KML route, and always stop")
     route.add_argument("--config", required=True)
     route.add_argument("--route", required=True)
     route.add_argument("--serial", default="")
+
     status = sub.add_parser("provider-status", help="query configured GPS Locator readiness")
     status.add_argument("--config", required=True)
     status.add_argument("--serial", default="")
+
+    campus = sub.add_parser(
+        "campus-run",
+        help="run campus-run for one or more WeCom accounts in sequence, GPS stays active between runs",
+    )
+    campus.add_argument("--config", required=True, help="GPS Locator provider config YAML")
+    campus.add_argument("--route", required=True, help="GPX or KML route file")
+    campus.add_argument("--serial", required=True, help="ADB device serial")
+    campus.add_argument("--adb", default=DEFAULT_ADB, help="path to adb executable")
+    accounts_group = campus.add_mutually_exclusive_group(required=True)
+    accounts_group.add_argument(
+        "--accounts",
+        nargs="+",
+        metavar="ENTERPRISE",
+        help="WeCom enterprise display names to run in order (inline)",
+    )
+    accounts_group.add_argument(
+        "--accounts-file",
+        metavar="FILE",
+        help="path to accounts.yaml with enterprise/phone/password entries",
+    )
+    campus.add_argument(
+        "--current-account",
+        default=None,
+        metavar="ENTERPRISE",
+        help="enterprise currently active on the device; overrides the 'current' flag in accounts.yaml",
+    )
+    campus.add_argument(
+        "--keep-gps",
+        action="store_true",
+        help="do not stop the GPS provider after all runs finish",
+    )
+
     args = parser.parse_args()
+
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG, format="%(levelname)s %(name)s: %(message)s")
+    else:
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
     if args.command == "doctor":
         result = run_doctor(args.adb)
         print(format_report(result))
         return 0 if all(ok for ok, _ in result.checks.values()) else 1
+
     if args.command == "run-route":
         config = load_provider_config(args.config)
         serial = args.serial or str(config.get("serial", ""))
@@ -49,6 +97,7 @@ def main() -> int:
         result = run_route_with_cleanup(provider, Path(args.route))
         print("route completed" if result else "route failed")
         return 0 if result else 1
+
     if args.command == "provider-status":
         config = load_provider_config(args.config)
         serial = args.serial or str(config.get("serial", ""))
@@ -56,6 +105,34 @@ def main() -> int:
         result = provider.status()
         print(result.stdout or result.stderr)
         return 0 if result.ok else 1
+
+    if args.command == "campus-run":
+        config = load_provider_config(args.config)
+        serial = args.serial or str(config.get("serial", ""))
+        provider = GpsLocatorProvider(config["commands"], serial=serial, cwd=config.get("working_directory"))
+        device = AndroidDevice(args.adb, serial)
+
+        if args.accounts_file:
+            loaded = load_accounts(args.accounts_file)
+            enterprise_list = ordered_enterprises(loaded, start=args.current_account)
+            current = args.current_account or next((a.enterprise for a in loaded if a.current), None)
+        else:
+            enterprise_list = args.accounts
+            current = args.current_account
+
+        multi_result = run_multi_account_mvp(
+            device=device,
+            provider=provider,
+            route=Path(args.route),
+            accounts=enterprise_list,
+            current_account=current,
+            stop_provider_on_finish=not args.keep_gps,
+        )
+        print(f"completed: {multi_result.completed}")
+        if multi_result.failed:
+            print(f"failed:    {multi_result.failed}")
+        return 0 if not multi_result.failed else 1
+
     return 2
 
 

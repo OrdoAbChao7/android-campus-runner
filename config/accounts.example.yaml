@@ -1,0 +1,26 @@
+# accounts.example.yaml — WeCom account credentials
+#
+# Copy this file to config/accounts.yaml and fill in your own values.
+# NEVER commit accounts.yaml to version control — it is listed in .gitignore.
+#
+# Fields per entry
+# ----------------
+# enterprise : the exact display name shown in the WeCom account switcher
+# phone      : mobile number used to log in (string, keep leading zeros)
+# password   : login password (string)
+# current    : (optional) set to true for the account that is active on the
+#              device when the runner starts; used to avoid a redundant switch
+
+accounts:
+  - enterprise: "企业名称A"
+    phone: "13800000001"
+    password: "your_password_here"
+    current: true
+
+  - enterprise: "企业名称B"
+    phone: "13800000002"
+    password: "your_password_here"
+
+  - enterprise: "企业名称C"
+    phone: "13800000003"
+    password: "your_password_here"
