@@ -1,0 +1,1 @@
+"""Minimal Android automation runner."""

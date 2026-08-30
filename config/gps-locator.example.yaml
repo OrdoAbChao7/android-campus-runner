@@ -1,0 +1,10 @@
+# Configure the official gps-locator desktop-cli checkout path.
+serial: "DEVICE_SERIAL"
+working_directory: "./gps-locator/desktop-cli"
+commands:
+  prepare: ["node", "gps-lab.mjs", "prepare", "--serial", "{serial}"]
+  launch: ["adb", "-s", "{serial}", "shell", "monkey", "-p", "com.gpsupdater.app", "1"]
+  status: ["node", "gps-lab.mjs", "status", "--serial", "{serial}"]
+  route: ["node", "gps-lab.mjs", "route", "--serial", "{serial}", "--file", "{route}"]
+  stop: ["node", "gps-lab.mjs", "stop", "--serial", "{serial}"]
+  report: ["node", "gps-lab.mjs", "report", "--output", "logs/gps-report", "--serial", "{serial}"]
