@@ -390,12 +390,12 @@ def get_accounts() -> Response:
     try:
         raw = yaml.safe_load(ACCOUNTS_PATH.read_text(encoding="utf-8")) or {}
         accounts = raw.get("accounts", [])
-        # Mask passwords in the response so they never leak to the browser.
+        # Return only the non-secret account metadata and credential reference.
         masked = [
             {
                 "enterprise": a.get("enterprise", ""),
                 "phone": a.get("phone", ""),
-                "password": "****" if a.get("password") else "",
+                "credential_ref": a.get("credential_ref"),
                 "current": bool(a.get("current", False)),
             }
             for a in accounts
@@ -409,8 +409,8 @@ def get_accounts() -> Response:
 def post_accounts() -> Response:
     """Write accounts to config/accounts.yaml.
 
-    Password fields that arrive as empty string are preserved from the
-    existing file so the frontend's ``****`` mask does not wipe real passwords.
+    Only credential references are accepted. Secret values must remain in an
+    external credential store and are never written by this endpoint.
     """
     body = request.get_json(silent=True)
     if not body or not isinstance(body.get("accounts"), list):
@@ -418,39 +418,26 @@ def post_accounts() -> Response:
 
     incoming: list[dict] = body["accounts"]
 
-    # Load existing passwords keyed by enterprise name.
-    existing_passwords: dict[str, str] = {}
-    if ACCOUNTS_PATH.exists():
-        try:
-            raw = yaml.safe_load(ACCOUNTS_PATH.read_text(encoding="utf-8")) or {}
-            for a in raw.get("accounts", []):
-                enterprise = a.get("enterprise", "")
-                if enterprise and a.get("password"):
-                    existing_passwords[enterprise] = str(a["password"])
-        except Exception:
-            pass  # start fresh if the file is malformed
-
     merged: list[dict] = []
     for entry in incoming:
+        if not isinstance(entry, dict):
+            return _err("each account must be an object")
+        if "password" in entry or "passwd" in entry:
+            return _err("plaintext credential fields are not accepted; use credential_ref")
         enterprise = str(entry.get("enterprise", "")).strip()
         phone = str(entry.get("phone", "")).strip()
-        password = str(entry.get("password", ""))
+        credential_ref = entry.get("credential_ref")
+        if credential_ref is not None:
+            credential_ref = str(credential_ref).strip()
         current = bool(entry.get("current", False))
 
         if not enterprise or not phone:
             return _err("each account must have 'enterprise' and 'phone'")
 
-        # Preserve the original password when the frontend sends an empty string.
-        if not password:
-            password = existing_passwords.get(enterprise, "")
-
-        if not password:
-            return _err(f"account '{enterprise}' has no password and none was found in the existing file")
-
         merged.append({
             "enterprise": enterprise,
             "phone": phone,
-            "password": password,
+            "credential_ref": credential_ref,
             "current": current,
         })
 

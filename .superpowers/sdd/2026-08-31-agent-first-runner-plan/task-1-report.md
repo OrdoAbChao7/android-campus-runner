@@ -28,3 +28,16 @@ output.
 `credential_ref` is intentionally only a reference; resolving secrets for a
 login flow is outside this task and must not be implemented by persisting or
 logging the secret.
+
+## Review blocker follow-up
+
+Dashboard account GET responses now expose only enterprise, phone,
+credential_ref, and current. POST rejects plaintext credential fields before
+writing, and README/CLI help now document credential_ref rather than
+plaintext credentials. Added `tests/test_dashboard_accounts.py` covering
+response serialization and write rejection.
+
+Follow-up validation: `pytest -q tests/test_accounts.py tests/test_multi_account.py tests/test_dashboard_accounts.py`
+reported **27 passed, 1 skipped**; full `pytest -q` reported **52 passed, 1
+skipped**. The dashboard tests skip because Flask is not installed in this
+environment; they execute when the dashboard dependency is available.

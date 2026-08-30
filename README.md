@@ -25,7 +25,7 @@ A single-file (or minimal-file) web frontend in `dashboard/static/` that talks t
 
 **Required pages / panels:**
 
-1. **账号管理** — table of accounts (`enterprise`, `phone`, `password` masked as `****`), add / edit / delete rows, save button (`POST /api/accounts`)
+1. **账号管理** — table of accounts (`enterprise`, `phone`, optional `credential_ref`), add / edit / delete rows, save button (`POST /api/accounts`)
 2. **运行配置** — form for `serial`, `route` (dropdown from `GET /api/routes`), `gps_config`, `adb`, `keep_gps`; save button (`POST /api/config`)
 3. **今日看板** — progress cards per account (pending / running / done / failed), Start / Stop buttons, real-time log console fed by `GET /api/run/stream` (SSE)
 
@@ -33,8 +33,8 @@ A single-file (or minimal-file) web frontend in `dashboard/static/` that talks t
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/accounts` | List accounts (passwords masked as `****`) |
-| `POST` | `/api/accounts` | Save accounts; empty password string = keep existing |
+| `GET` | `/api/accounts` | List account metadata and credential references (never secrets) |
+| `POST` | `/api/accounts` | Save accounts; plaintext credential fields are rejected |
 | `GET` | `/api/config` | Get dashboard run config |
 | `POST` | `/api/config` | Save dashboard run config |
 | `GET` | `/api/routes` | List `.gpx`/`.kml` files in `routes/` |
@@ -162,19 +162,19 @@ Copy `config/accounts.example.yaml` to `config/accounts.yaml`.
 accounts:
   - enterprise: "企业名称A"   # exact name in WeCom account switcher
     phone: "13800000001"
-    password: "your_password"
+    credential_ref: "env:WECOM_ACCOUNT_A"
     current: true             # account active on device right now
 
   - enterprise: "企业名称B"
     phone: "13800000002"
-    password: "your_password"
+    credential_ref: "env:WECOM_ACCOUNT_B"
 ```
 
 | Field | Required | Description |
 |---|---|---|
 | `enterprise` | yes | Display name in WeCom switcher (must match exactly) |
 | `phone` | yes | Mobile number used to log in |
-| `password` | yes | Login password |
+| `credential_ref` | no | External secret-store reference; never put a plaintext secret in YAML |
 | `current` | no | `true` for the account currently active on device |
 
 ---

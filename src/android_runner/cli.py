@@ -60,7 +60,7 @@ def main() -> int:
     accounts_group.add_argument(
         "--accounts-file",
         metavar="FILE",
-        help="path to accounts.yaml with enterprise/phone/password entries",
+        help="path to accounts.yaml with enterprise/phone and optional credential_ref entries",
     )
     campus.add_argument(
         "--current-account",
