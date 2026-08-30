@@ -204,3 +204,33 @@ def test_evidence_writer_redacts_quoted_values_exception_text_and_event_name(tmp
     assert "snapshot-secret-token" not in artifacts
     assert "provider unavailable" in artifacts
     assert "Campus Run" in artifacts
+
+
+def test_evidence_writer_redacts_escaped_and_multiline_quoted_values_without_hiding_normal_words(tmp_path):
+    """Escaped quotes and newlines stay inside a redacted value while ordinary words remain readable."""
+    writer = EvidenceWriter(tmp_path, "run-005")
+
+    writer.append_event(
+        "tokenizer_started",
+        {
+            "message": 'token: "abc\\"ordinary words"',
+            "detail": "tokenize credentialing continues",
+        },
+    )
+    snapshot_path = writer.write_snapshot(
+        "provider-state",
+        {
+            "details": 'credential: "first secret line\nsecond secret line"',
+            "bearer_text": 'Bearer "bearer\\"tail words\nsecond bearer line"',
+        },
+    )
+
+    artifacts = (tmp_path / "run-005" / "events.jsonl").read_text(encoding="utf-8") + snapshot_path.read_text(encoding="utf-8")
+    assert "abc" not in artifacts
+    assert "ordinary words" not in artifacts
+    assert "first secret line" not in artifacts
+    assert "second secret line" not in artifacts
+    assert "tail words" not in artifacts
+    assert "second bearer line" not in artifacts
+    assert "tokenizer_started" in artifacts
+    assert "tokenize credentialing continues" in artifacts

@@ -11,17 +11,17 @@ from threading import Lock
 from typing import Any
 
 
-_SENSITIVE_KEY = re.compile(
-    r"password|passwd|secret|token|authorization|cookie|credential|api[-_ ]?key|access[-_ ]?key",
-    re.IGNORECASE,
-)
+_SECRET_LABEL = r"password|passwd|secret|token|authorization|cookie|credential|api[-_ ]?key|access[-_ ]?key"
+_SENSITIVE_KEY = re.compile(rf"(?<![A-Za-z0-9])(?:{_SECRET_LABEL})(?![A-Za-z0-9])", re.IGNORECASE)
 _SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 _REDACTED = "[REDACTED]"
-_SECRET_LABEL = r"password|passwd|secret|token|authorization|cookie|credential|api[-_ ]?key|access[-_ ]?key"
-_BEARER_VALUE = re.compile(r"\bBearer\s+(?:(['\"]).*?\1|[^\s,;]+)", re.IGNORECASE)
+_BEARER_VALUE = re.compile(
+    r"\bBearer\s+(?:(?P<bearer_quote>['\"])(?:\\.|(?!(?P=bearer_quote)).)*(?P=bearer_quote)|[^\s,;]+)",
+    re.IGNORECASE | re.DOTALL,
+)
 _QUOTED_NAMED_SECRET_VALUE = re.compile(
-    rf"\b(?P<label>{_SECRET_LABEL})\s*(?P<separator>[:=])\s*(?P<quote>['\"])(?P<value>.*?)(?P=quote)",
-    re.IGNORECASE,
+    rf"\b(?P<label>{_SECRET_LABEL})\s*(?P<separator>[:=])\s*(?P<quote>['\"])(?P<value>(?:\\.|(?!(?P=quote)).)*)(?P=quote)",
+    re.IGNORECASE | re.DOTALL,
 )
 _NAMED_SECRET_VALUE = re.compile(
     rf"\b(?P<label>{_SECRET_LABEL})"
@@ -33,7 +33,7 @@ _SPACED_SECRET_VALUE = re.compile(
     re.IGNORECASE,
 )
 _SENSITIVE_FRAGMENT = re.compile(
-    rf"[A-Za-z0-9_.-]*(?:{_SECRET_LABEL})[A-Za-z0-9_.-]*",
+    rf"(?<![A-Za-z0-9])(?:{_SECRET_LABEL})(?![A-Za-z0-9])",
     re.IGNORECASE,
 )
 
