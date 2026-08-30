@@ -241,13 +241,14 @@ python -m android_runner provider-status --config config/gps-locator.yaml --seri
 campus-run flow (multi-account)
 ──────────────────────────────────────────────────────────────────
 1. Load accounts from accounts.yaml
-2. provider.prepare()  — start GPS mock session on device    ─┐
-3. For each enterprise account:                               │ GPS stays on
-   a. WeCom: 工作台 → 智慧体育 → 校园跑 → 开始校园跑         │ between runs
-   b. Tap 自由跑                                              │
-   c. provider.start_route(route.gpx) — play GPS track       │
-   d. If more accounts remain: switch WeCom enterprise       ─┘
-4. provider.stop()  — end GPS mock session
+2. For each enterprise account:
+   a. provider.prepare() and provider.ready() — verify the GPS session
+   b. Validate and consume that account's single-use RunIntent
+   c. WeCom: 工作台 → 智慧体育 → 校园跑 → 开始校园跑
+   d. Only then tap 自由跑
+   e. provider.start_route(route.gpx) — play GPS track
+   f. provider.stop_verified() — require simulationActive: false
+   g. If more accounts remain: switch WeCom enterprise
 ```
 
 Account switching uses WeCom's built-in enterprise switcher
@@ -278,6 +279,8 @@ The test suite uses only stdlib and pytest — no device connection required.
 
 - `run_mvp` stops at the **自由跑** prompt unless it consumes a registered,
   single-use `RunIntent` whose observation matches the authorized action.
+- Each account has its own RunIntent and verified GPS shutdown; a stop
+  verification failure enters `SAFE_STOP` and prevents the next account.
 - `SafeAccountSwitcher` never switches accounts unless `allow_logout` returns
   `True`, preventing accidental session invalidation.
 - `accounts.yaml` is listed in `.gitignore`. Do not override this.

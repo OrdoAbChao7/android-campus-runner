@@ -60,7 +60,7 @@ def _make_fns(open_raises=False, confirm_raises=False):
             raise RuntimeError("open failed")
         return CampusRunState.START_PROMPT
 
-    def confirm_fn(device, *, allow_start=False):
+    def confirm_fn(device, **kwargs):
         if confirm_raises:
             raise RuntimeError("confirm failed")
         return CampusRunState.RUNNING
@@ -195,12 +195,12 @@ def test_failed_stop_after_first_account_blocks_next_account():
         route=Path("route.gpx"),
         accounts=["企业A", "企业B"],
         open_campus_run_fn=lambda device: None,
-        confirm_free_run_fn=lambda device, *, allow_start: confirmations.append(allow_start),
+        confirm_free_run_fn=lambda device, **kwargs: confirmations.append(kwargs["intent"].intent_id),
         switch_account_fn=lambda name: True,
         device=Device(),
     )
 
-    assert confirmations == [True]
+    assert confirmations == ["direct-1"]
     assert provider.calls.count("route") == 1
     assert result.completed == []
     assert result.state is RunState.SAFE_STOP
@@ -331,7 +331,7 @@ def test_mvp_multi_account_ready_check_failure_marks_all_failed(monkeypatch):
 def test_mvp_multi_account_full_flow(monkeypatch, tmp_path):
     """Integration: two accounts complete successfully via run_multi_account_mvp."""
     monkeypatch.setattr(runner, "open_campus_run", lambda device: CampusRunState.START_PROMPT)
-    monkeypatch.setattr(runner, "confirm_free_run", lambda device, allow_start: CampusRunState.RUNNING)
+    monkeypatch.setattr(runner, "confirm_free_run", lambda device, **kwargs: CampusRunState.RUNNING)
 
     switched_to: list[str] = []
 

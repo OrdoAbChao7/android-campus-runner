@@ -89,18 +89,20 @@ def run_multi_account(
                 result.state = RunState.SAFE_STOP
                 break
             intent, observation = (intents or {}).get(account, (None, None))
-            try:
-                if intent is None or observation is None or intent_registry is None:
-                    raise ValueError("missing start authorization")
-                intent_registry.consume(intent, observation, action_id)
-            except Exception:
+            if intent is None or observation is None or intent_registry is None:
                 log.error("no valid start authorization for account: %s", account)
                 result.failed.append(account)
                 result.state = RunState.SAFE_STOP
                 break
             try:
                 open_campus_run_fn(device)
-                confirm_free_run_fn(device, allow_start=True)
+                confirm_free_run_fn(
+                    device,
+                    intent=intent,
+                    observation=observation,
+                    intent_registry=intent_registry,
+                    action_id=action_id,
+                )
             except Exception as exc:
                 log.error("failed to open campus run for %s: %s", account, exc)
                 result.failed.append(account)

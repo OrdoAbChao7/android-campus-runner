@@ -31,7 +31,7 @@ def test_mvp_stops_at_prompt_by_default(monkeypatch):
 
 def test_mvp_runs_route_then_switches_when_authorized(monkeypatch, tmp_path):
     monkeypatch.setattr(runner, "open_campus_run", lambda device: CampusRunState.START_PROMPT)
-    monkeypatch.setattr(runner, "confirm_free_run", lambda device, allow_start: CampusRunState.RUNNING)
+    monkeypatch.setattr(runner, "confirm_free_run", lambda device, **kwargs: CampusRunState.RUNNING)
     provider = Provider()
     switcher = SafeAccountSwitcher(lambda: None, lambda: None, lambda: True, allow_logout=lambda: True)
     route = tmp_path / "route.gpx"
@@ -55,7 +55,7 @@ def test_mvp_runs_route_then_switches_when_authorized(monkeypatch, tmp_path):
 
 def test_mvp_cleans_up_when_readiness_fails(monkeypatch):
     monkeypatch.setattr(runner, "open_campus_run", lambda device: CampusRunState.START_PROMPT)
-    monkeypatch.setattr(runner, "confirm_free_run", lambda device, allow_start: CampusRunState.RUNNING)
+    monkeypatch.setattr(runner, "confirm_free_run", lambda device, **kwargs: CampusRunState.RUNNING)
     provider = Provider()
     provider.ready = lambda: False
     result = runner.run_mvp(Device(), provider, Path("route.gpx"), SafeAccountSwitcher(lambda: None, lambda: None, lambda: True))
@@ -78,7 +78,7 @@ def test_mvp_checks_provider_before_opening_start_prompt(monkeypatch):
 def test_mvp_never_confirms_free_run_without_single_use_intent(monkeypatch):
     clicks = []
     monkeypatch.setattr(runner, "open_campus_run", lambda device: CampusRunState.START_PROMPT)
-    monkeypatch.setattr(runner, "confirm_free_run", lambda device, allow_start: clicks.append(allow_start))
+    monkeypatch.setattr(runner, "confirm_free_run", lambda device, **kwargs: clicks.append(kwargs))
     provider = Provider()
     provider.ready = lambda: True
 
@@ -109,4 +109,34 @@ def test_mvp_cleanup_verification_failure_returns_safe_stop(monkeypatch):
         SafeAccountSwitcher(lambda: None, lambda: None, lambda: True),
     )
 
+    assert result.state is RunState.SAFE_STOP
+
+
+def test_mvp_verified_stop_failure_after_authorized_route_returns_safe_stop(monkeypatch, tmp_path):
+    monkeypatch.setattr(runner, "open_campus_run", lambda device: CampusRunState.START_PROMPT)
+    monkeypatch.setattr(runner, "confirm_free_run", lambda device, **kwargs: CampusRunState.RUNNING)
+
+    class UnsafeProvider(Provider):
+        def stop_verified(self):
+            return type("Result", (), {"ok": False})()
+
+    route = tmp_path / "route.gpx"
+    route.write_text("route", encoding="utf-8")
+    now = datetime.now(timezone.utc)
+    intent = RunIntent(
+        intent_id="stop-fails", adb_serial="PHONE", device_fingerprint="fingerprint",
+        current_enterprise="current", target_enterprise="target", route_sha256=route_sha256(route),
+        not_before=now - timedelta(minutes=1), not_after=now + timedelta(minutes=1),
+        max_duration=timedelta(minutes=30), allowed_action_ids={"campus_run.start"},
+    )
+    registry = IntentUseRegistry()
+    registry.register(intent)
+    result = runner.run_mvp(
+        Device(), UnsafeProvider(), route, SafeAccountSwitcher(lambda: None, lambda: None, lambda: True),
+        intent=intent,
+        observation=RunObservation("PHONE", "fingerprint", route_sha256(route), now),
+        intent_registry=registry,
+    )
+
+    assert result.campus_state is CampusRunState.RUNNING
     assert result.state is RunState.SAFE_STOP

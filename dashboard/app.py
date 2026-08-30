@@ -185,7 +185,6 @@ _DEFAULT_DASHBOARD_CONFIG: dict = {
     "serial": "",
     "adb": DEFAULT_ADB,
     "accounts_file": str(ACCOUNTS_PATH),
-    "keep_gps": False,
 }
 
 
@@ -194,7 +193,7 @@ def _load_dashboard_config() -> dict:
         return dict(_DEFAULT_DASHBOARD_CONFIG)
     raw = yaml.safe_load(DASHBOARD_CONFIG_PATH.read_text(encoding="utf-8")) or {}
     cfg = dict(_DEFAULT_DASHBOARD_CONFIG)
-    cfg.update(raw)
+    cfg.update({key: value for key, value in raw.items() if key in cfg})
     return cfg
 
 
@@ -221,7 +220,6 @@ def _run_task(
     gps_config_path: str,
     route: str,
     accounts_file: str,
-    keep_gps: bool,
 ) -> None:
     """Target function for the background campus-run thread.
 
@@ -327,8 +325,6 @@ def _run_task(
                     route=Path(route),
                     accounts=[enterprise],
                     current_account=sub_current,
-                    # Keep GPS alive between accounts; stop only after the last.
-                    stop_provider_on_finish=(i == len(enterprise_list) - 1 and not keep_gps),
                 )
             except Exception as exc:
                 log.error("unexpected error for account %s: %s", enterprise, exc, exc_info=True)
@@ -475,7 +471,7 @@ def post_config() -> Response:
         return _err("request body must be a JSON object")
 
     # Only allow known keys to avoid arbitrary data in the file.
-    allowed = {"gps_config", "route", "serial", "adb", "accounts_file", "keep_gps"}
+    allowed = {"gps_config", "route", "serial", "adb", "accounts_file"}
     cfg = _load_dashboard_config()
     for key in allowed:
         if key in body:
@@ -519,8 +515,7 @@ def run_start() -> Response:
         {
             "serial":        "...",
             "route":         "filename.gpx",   # relative to routes/ or absolute
-            "accounts_file": "/path/to/accounts.yaml",
-            "keep_gps":      false
+            "accounts_file": "/path/to/accounts.yaml"
         }
 
     Returns 409 if a run is already in progress.
@@ -535,7 +530,6 @@ def run_start() -> Response:
     # Resolve overrides (request body takes precedence over dashboard.yaml).
     serial: str = body.get("serial", cfg.get("serial", ""))
     adb: str = body.get("adb", cfg.get("adb", DEFAULT_ADB))
-    keep_gps: bool = bool(body.get("keep_gps", cfg.get("keep_gps", False)))
     gps_config: str = body.get("gps_config", cfg.get("gps_config", str(GPS_CONFIG_PATH)))
 
     accounts_file: str = body.get("accounts_file", cfg.get("accounts_file", str(ACCOUNTS_PATH)))
@@ -568,7 +562,6 @@ def run_start() -> Response:
             "gps_config_path": gps_config,
             "route": str(route_path),
             "accounts_file": accounts_file,
-            "keep_gps": keep_gps,
         },
         daemon=True,
         name="campus-run",

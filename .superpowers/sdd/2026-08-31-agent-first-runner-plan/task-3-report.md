@@ -32,3 +32,12 @@ The cleanup adapter calls `stop_verified()` when a provider supplies it; simple 
 - Updated stale CLI/README language that advertised keeping GPS active or `allow_start` authorization.
 
 Verification after this fix round: `pytest -q` completed with `76 passed, 1 skipped`.
+
+## Fix round 2
+
+- `confirm_free_run()` is now an atomic authorization boundary: it accepts only a `RunIntent`, matching `RunObservation`, and `IntentUseRegistry`, consumes the intent, and then clicks the UI. The public `allow_start` boolean has been removed.
+- Dashboard execution and persisted configuration no longer accept or pass `keep_gps` / `stop_provider_on_finish`; each delegated account flow uses verified shutdown.
+- `MvpRunResult.state` now returns `SAFE_STOP` when verified cleanup fails after an authorized route, rather than reporting an idle state after a failed stop.
+- Rewrote the README flow so it documents per-account intent consumption, readiness checks, and verified shutdown before account switching.
+
+Verification after this fix round: `python -m py_compile dashboard/app.py` and `pytest -q` completed with `78 passed, 1 skipped`.

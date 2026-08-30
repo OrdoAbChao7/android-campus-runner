@@ -3,6 +3,7 @@ from __future__ import annotations
 from enum import Enum, auto
 
 from ..device import AndroidDevice
+from ..intent import IntentUseRegistry, RunIntent, RunObservation
 
 
 class CampusRunState(Enum):
@@ -37,10 +38,16 @@ def open_campus_run(device: AndroidDevice, timeout: float = 15.0) -> CampusRunSt
     return CampusRunState.START_PROMPT
 
 
-def confirm_free_run(device: AndroidDevice, *, allow_start: bool = False,
-                     timeout: float = 10.0) -> CampusRunState:
-    """Confirm the WeCom free-run prompt only with explicit authorization."""
-    if not allow_start:
-        raise PermissionError("free-run confirmation requires explicit allow_start")
+def confirm_free_run(
+    device: AndroidDevice,
+    *,
+    intent: RunIntent,
+    observation: RunObservation,
+    intent_registry: IntentUseRegistry,
+    action_id: str = "campus_run.start",
+    timeout: float = 10.0,
+) -> CampusRunState:
+    """Atomically consume a start authorization before confirming free-run."""
+    intent_registry.consume(intent, observation, action_id)
     device.click(text="自由跑", timeout=timeout)
     return CampusRunState.RUNNING

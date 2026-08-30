@@ -6,7 +6,7 @@ from pathlib import Path
 from .intent import IntentUseRegistry, RunIntent, RunObservation
 from .state import RunState
 from .wecom.campus_run import CampusRunState, confirm_free_run, open_campus_run
-from .wecom.account import WeComEnterpriseSwitcher
+from .wecom.account import AccountSwitchState, WeComEnterpriseSwitcher
 from .workflow import MultiRunResult, run_multi_account, run_route_then_switch
 
 
@@ -29,21 +29,6 @@ def _cleanup_state(provider) -> RunState:
     return RunState.IDLE if _stop_safely(provider) else RunState.SAFE_STOP
 
 
-def _consume_start_intent(
-    intent: RunIntent | None,
-    observation: RunObservation | None,
-    registry: IntentUseRegistry | None,
-    action_id: str,
-) -> bool:
-    if intent is None or observation is None or registry is None:
-        return False
-    try:
-        registry.consume(intent, observation, action_id)
-    except Exception:
-        return False
-    return True
-
-
 def run_mvp(
     device,
     provider,
@@ -62,11 +47,21 @@ def run_mvp(
     if hasattr(provider, "ready") and not provider.ready():
         return MvpRunResult(CampusRunState.INIT, state=_cleanup_state(provider))
     state = open_campus_run(device)
-    if not _consume_start_intent(intent, observation, intent_registry, action_id):
+    if intent is None or observation is None or intent_registry is None:
         return MvpRunResult(state, state=_cleanup_state(provider))
-    confirm_free_run(device, allow_start=True)
+    try:
+        confirm_free_run(
+            device,
+            intent=intent,
+            observation=observation,
+            intent_registry=intent_registry,
+            action_id=action_id,
+        )
+    except Exception:
+        return MvpRunResult(state, state=_cleanup_state(provider))
     account_state = run_route_then_switch(provider, route, switcher)
-    return MvpRunResult(CampusRunState.RUNNING, account_state)
+    run_state = RunState.SAFE_STOP if account_state is AccountSwitchState.ABORT else RunState.IDLE
+    return MvpRunResult(CampusRunState.RUNNING, account_state, run_state)
 
 
 def run_multi_account_mvp(
@@ -111,7 +106,6 @@ def run_multi_account_mvp(
     def switch_to(next_enterprise: str) -> bool:
         switcher = WeComEnterpriseSwitcher(device, target=next_enterprise, current=_current_ref[0])
         state = switcher.switch()
-        from .wecom.account import AccountSwitchState
         ok = state is AccountSwitchState.READY
         if ok:
             _current_ref[0] = next_enterprise

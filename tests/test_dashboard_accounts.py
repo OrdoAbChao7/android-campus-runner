@@ -39,3 +39,14 @@ def test_accounts_api_rejects_password_without_writing(monkeypatch, tmp_path):
     assert response.status_code == 400
     assert "password" not in response.get_json()["error"].lower()
     assert not path.exists()
+
+
+def test_dashboard_config_does_not_persist_keep_gps(monkeypatch, tmp_path):
+    config_path = tmp_path / "dashboard.yaml"
+    monkeypatch.setattr(dashboard, "DASHBOARD_CONFIG_PATH", config_path)
+
+    response = dashboard.app.test_client().post("/api/config", json={"keep_gps": True})
+
+    assert response.status_code == 200
+    assert "keep_gps" not in response.get_json()["config"]
+    assert "keep_gps" not in config_path.read_text(encoding="utf-8")
