@@ -1,0 +1,5 @@
+# Task 1 brief — secure account model
+
+Read this first; it is the complete requirements for Task 1.
+
+In the current repository, harden account configuration so runtime objects never carry plaintext passwords. Update `src/android_runner/accounts.py`, `config/accounts.example.yaml`, `tests/test_accounts.py`, and `tests/test_multi_account.py` as needed. Replace password fields with optional `credential_ref`; reject `password`/`passwd` keys in the production loader with a clear validation error. Preserve enterprise, phone, current-account ordering and duplicate-current validation. Add a resolver protocol or injectable callback only if needed for tests; it must not persist or log secret values. Ensure repr/serialization/error text contains no password. Keep compatibility narrowly scoped to test fixtures, not production YAML. Run `pytest -q`. Commit with a focused message and write a report to `.superpowers/sdd/2026-08-31-agent-first-runner-plan/task-1-report.md` containing status, commit hash, tests/output, and concerns. Do not spawn subagents.
