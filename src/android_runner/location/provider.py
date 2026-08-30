@@ -33,18 +33,36 @@ class GpsLocatorProvider:
         self.timeout = timeout
         self.poll_interval = poll_interval
         self.last_result: ProviderResult | None = None
+        self._unsafe_latched = False
+
+    def _blocked_result(self, operation: str) -> ProviderResult:
+        result = ProviderResult([], 1, "", f"GPS Locator is unsafe; {operation} is blocked until simulationActive == false")
+        self.last_result = result
+        return result
 
     def prepare(self) -> ProviderResult:
+        if self._unsafe_latched:
+            return self._blocked_result("prepare")
         result = self._run(command_for_route(self.commands["prepare"], "", self.serial))
         if result.ok and self.commands.get("launch"):
             result = self._run(command_for_route(self.commands["launch"], "", self.serial))
         return result
 
     def status(self) -> ProviderResult:
-        return self._run(command_for_route(self.commands["status"], "", self.serial))
+        result = self._run(command_for_route(self.commands["status"], "", self.serial))
+        if result.ok:
+            try:
+                payload = json.loads(result.stdout.strip().splitlines()[-1])
+            except (ValueError, IndexError):
+                payload = None
+            if isinstance(payload, dict) and payload.get("simulationActive") is False:
+                self._unsafe_latched = False
+        return result
 
     def ready(self) -> bool:
         """Return true only when the provider reports a usable mock location."""
+        if self._unsafe_latched:
+            return False
         result = self.status()
         if not result.ok:
             return False
@@ -56,6 +74,8 @@ class GpsLocatorProvider:
                     and payload.get("commandReady"))
 
     def start_route(self, route: Path) -> ProviderResult:
+        if self._unsafe_latched:
+            return self._blocked_result("start_route")
         validate_route(route)
         return self._run(command_for_route(self.commands["route"], route, self.serial))
 
@@ -66,6 +86,7 @@ class GpsLocatorProvider:
         """Stop GPS Locator and confirm its simulation is no longer active."""
         stopped = self.stop()
         if not stopped.ok:
+            self._unsafe_latched = True
             return stopped
 
         deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
@@ -78,6 +99,7 @@ class GpsLocatorProvider:
                 except (ValueError, IndexError):
                     payload = None
                 if isinstance(payload, dict) and payload.get("simulationActive") is False:
+                    self._unsafe_latched = False
                     self.last_result = stopped
                     return stopped
             if time.monotonic() >= deadline:
@@ -88,6 +110,7 @@ class GpsLocatorProvider:
                     stdout,
                     "GPS Locator stop could not verify simulationActive == false",
                 )
+                self._unsafe_latched = True
                 self.last_result = failure
                 return failure
             time.sleep(self.poll_interval)

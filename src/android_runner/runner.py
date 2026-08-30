@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .intent import IntentUseRegistry, RunIntent, RunObservation
+from .state import RunState
 from .wecom.campus_run import CampusRunState, confirm_free_run, open_campus_run
 from .wecom.account import WeComEnterpriseSwitcher
 from .workflow import MultiRunResult, run_multi_account, run_route_then_switch
@@ -13,6 +14,7 @@ from .workflow import MultiRunResult, run_multi_account, run_route_then_switch
 class MvpRunResult:
     campus_state: CampusRunState
     account_state: object | None = None
+    state: RunState = RunState.IDLE
 
 
 def _stop_safely(provider) -> bool:
@@ -21,6 +23,10 @@ def _stop_safely(provider) -> bool:
     except Exception:
         return False
     return bool(getattr(result, "ok", True))
+
+
+def _cleanup_state(provider) -> RunState:
+    return RunState.IDLE if _stop_safely(provider) else RunState.SAFE_STOP
 
 
 def _consume_start_intent(
@@ -44,7 +50,6 @@ def run_mvp(
     route: Path,
     switcher,
     *,
-    allow_start: bool = False,
     intent: RunIntent | None = None,
     observation: RunObservation | None = None,
     intent_registry: IntentUseRegistry | None = None,
@@ -53,15 +58,12 @@ def run_mvp(
     """Execute the authorized MVP flow, stopping safely at the start prompt by default."""
     prepared = provider.prepare()
     if not getattr(prepared, "ok", True):
-        _stop_safely(provider)
-        return MvpRunResult(CampusRunState.INIT)
+        return MvpRunResult(CampusRunState.INIT, state=_cleanup_state(provider))
     if hasattr(provider, "ready") and not provider.ready():
-        _stop_safely(provider)
-        return MvpRunResult(CampusRunState.INIT)
+        return MvpRunResult(CampusRunState.INIT, state=_cleanup_state(provider))
     state = open_campus_run(device)
     if not _consume_start_intent(intent, observation, intent_registry, action_id):
-        _stop_safely(provider)
-        return MvpRunResult(state)
+        return MvpRunResult(state, state=_cleanup_state(provider))
     confirm_free_run(device, allow_start=True)
     account_state = run_route_then_switch(provider, route, switcher)
     return MvpRunResult(CampusRunState.RUNNING, account_state)
@@ -79,9 +81,8 @@ def run_multi_account_mvp(
 ) -> MultiRunResult:
     """Run campus-run sequentially for every account in *accounts*.
 
-    The GPS provider is prepared once before the first run and kept alive
-    between runs. It is stopped only after all accounts finish (or on error),
-    unless *stop_provider_on_finish* is False.
+    The GPS provider is prepared once before the first run and is always
+    stopped with verification after completion or an error.
 
     *accounts* is a list of enterprise (or account) display names that WeCom
     shows in its account-switcher. The device must already be logged in to all
@@ -97,11 +98,11 @@ def run_multi_account_mvp(
     prepared = provider.prepare()
     if not getattr(prepared, "ok", True):
         _stop_safely(provider)
-        return MultiRunResult(failed=list(accounts))
+        return MultiRunResult(failed=list(accounts), state=RunState.SAFE_STOP)
 
     if hasattr(provider, "ready") and not provider.ready():
         _stop_safely(provider)
-        return MultiRunResult(failed=list(accounts))
+        return MultiRunResult(failed=list(accounts), state=RunState.SAFE_STOP)
 
     # Build a switch function: given the next enterprise name, perform the switch.
     # Track the current enterprise in a mutable container so the closure can update it.
@@ -124,7 +125,6 @@ def run_multi_account_mvp(
         confirm_free_run_fn=confirm_free_run,
         switch_account_fn=switch_to,
         device=device,
-        authorize_start=lambda account: _consume_start_intent(
-            *(intents or {}).get(account, (None, None)), intent_registry, "campus_run.start"
-        ),
+        intents=intents,
+        intent_registry=intent_registry,
     )

@@ -46,9 +46,19 @@ def test_failed_verified_stop_blocks_completion_and_enters_safe_stop():
         confirm_free_run_fn=lambda device, *, allow_start: None,
         switch_account_fn=lambda account: True,
         device=object(),
-        authorize_start=lambda account: True,
     )
 
     assert result.completed == []
     assert result.failed == ["enterprise"]
     assert result.state is RunState.SAFE_STOP
+
+
+def test_workflow_rejects_authorize_callback_bypass():
+    with __import__("pytest").raises(TypeError):
+        run_multi_account(
+            provider=Provider(), route=Path("route.gpx"), accounts=["enterprise"],
+            open_campus_run_fn=lambda device: None,
+            confirm_free_run_fn=lambda device, *, allow_start: None,
+            switch_account_fn=lambda account: True, device=object(),
+            authorize_start=lambda account: True,
+        )

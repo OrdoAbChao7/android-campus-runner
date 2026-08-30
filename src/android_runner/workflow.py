@@ -6,6 +6,7 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import Protocol
 
+from .intent import IntentUseRegistry, RunIntent, RunObservation
 from .wecom.account import AccountSwitchState
 from .state import RunState
 
@@ -67,19 +68,32 @@ def run_multi_account(
     switch_account_fn: Callable[[str], bool],
     device,
     *,
-    authorize_start: Callable[[str], bool] | None = None,
+    intents: dict[str, tuple[RunIntent, RunObservation]] | None = None,
+    intent_registry: IntentUseRegistry | None = None,
+    action_id: str = "campus_run.start",
 ) -> MultiRunResult:
-    """Run each account only after an explicit authorization callback allows it."""
+    """Run each account only after consuming its registered start authorization."""
     result = MultiRunResult()
-    if hasattr(provider, "ready") and not provider.ready():
-        result.failed.extend(accounts)
-        result.state = RunState.SAFE_STOP
-        stop_provider_verified(provider)
-        return result
+    needs_cleanup = True
     try:
         for i, account in enumerate(accounts):
             log.info("[%d/%d] starting run for account: %s", i + 1, len(accounts), account)
-            if authorize_start is None or not authorize_start(account):
+            if i and hasattr(provider, "prepare"):
+                prepared = provider.prepare()
+                if not getattr(prepared, "ok", True):
+                    result.failed.append(account)
+                    result.state = RunState.SAFE_STOP
+                    break
+            if hasattr(provider, "ready") and not provider.ready():
+                result.failed.append(account)
+                result.state = RunState.SAFE_STOP
+                break
+            intent, observation = (intents or {}).get(account, (None, None))
+            try:
+                if intent is None or observation is None or intent_registry is None:
+                    raise ValueError("missing start authorization")
+                intent_registry.consume(intent, observation, action_id)
+            except Exception:
                 log.error("no valid start authorization for account: %s", account)
                 result.failed.append(account)
                 result.state = RunState.SAFE_STOP
@@ -103,6 +117,14 @@ def run_multi_account(
                 result.failed.append(account)
                 break
 
+            stopped = stop_provider_verified(provider)
+            needs_cleanup = False
+            if not stopped:
+                log.error("provider stop verification failed for account: %s", account)
+                result.failed.append(account)
+                result.state = RunState.SAFE_STOP
+                break
+
             log.info("run completed for account: %s", account)
             result.completed.append(account)
 
@@ -115,8 +137,9 @@ def run_multi_account(
                     log.error("account switch failed, aborting remaining runs")
                     result.failed.extend(accounts[i + 1:])
                     break
+                needs_cleanup = True
     finally:
-        if not stop_provider_verified(provider):
+        if needs_cleanup and not stop_provider_verified(provider):
             result.completed.clear()
             if accounts:
                 result.failed = list(dict.fromkeys(result.failed + accounts))

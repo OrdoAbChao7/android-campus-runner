@@ -23,3 +23,12 @@
 ## Compatibility note
 
 The cleanup adapter calls `stop_verified()` when a provider supplies it; simple existing test/dry-run doubles without that method continue to use `stop()`. Production `GpsLocatorProvider` always supplies verified shutdown.
+
+## Fix round 1
+
+- Removed the workflow `authorize_start` callback and the runner `allow_start` parameter. Multi-account execution now receives and consumes a registered `RunIntent` plus matching `RunObservation` for every account; missing or replayed authorization reaches `SAFE_STOP` without confirming the UI.
+- Added a provider-session unsafe latch. Any failed `stop_verified()` blocks `prepare`, `ready`, and `start_route` until a later status confirmation reports `simulationActive: false`.
+- Provider shutdown is verified after every account. A failed stop clears completion for that account and prevents opening or confirming the next account; the following account is re-prepared and checked for readiness.
+- Updated stale CLI/README language that advertised keeping GPS active or `allow_start` authorization.
+
+Verification after this fix round: `pytest -q` completed with `76 passed, 1 skipped`.

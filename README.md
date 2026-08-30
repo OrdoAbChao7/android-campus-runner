@@ -26,7 +26,7 @@ A single-file (or minimal-file) web frontend in `dashboard/static/` that talks t
 **Required pages / panels:**
 
 1. **账号管理** — table of accounts (`enterprise`, `phone`, optional `credential_ref`), add / edit / delete rows, save button (`POST /api/accounts`)
-2. **运行配置** — form for `serial`, `route` (dropdown from `GET /api/routes`), `gps_config`, `adb`, `keep_gps`; save button (`POST /api/config`)
+2. **运行配置** — form for `serial`, `route` (dropdown from `GET /api/routes`), `gps_config`, `adb`; save button (`POST /api/config`)
 3. **今日看板** — progress cards per account (pending / running / done / failed), Start / Stop buttons, real-time log console fed by `GET /api/run/stream` (SSE)
 
 **Backend API already available (all at `http://localhost:5050`):**
@@ -221,7 +221,6 @@ CLI optional flags:
 | Flag | Description |
 |---|---|
 | `--current-account ENTERPRISE` | Override which account is active at startup |
-| `--keep-gps` | Skip stopping GPS provider after all runs |
 | `--verbose` / `-v` | Enable debug-level logging |
 
 ### CLI — other commands
@@ -277,8 +276,8 @@ The test suite uses only stdlib and pytest — no device connection required.
 
 ## Safety notes
 
-- `run_mvp` stops at the **自由跑** prompt by default (`allow_start=False`).
-  Pass `allow_start=True` explicitly to proceed.
+- `run_mvp` stops at the **自由跑** prompt unless it consumes a registered,
+  single-use `RunIntent` whose observation matches the authorized action.
 - `SafeAccountSwitcher` never switches accounts unless `allow_logout` returns
   `True`, preventing accidental session invalidation.
 - `accounts.yaml` is listed in `.gitignore`. Do not override this.

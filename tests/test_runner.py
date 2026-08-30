@@ -3,6 +3,7 @@ from pathlib import Path
 
 from android_runner import runner
 from android_runner.intent import IntentUseRegistry, RunIntent, RunObservation, route_sha256
+from android_runner.state import RunState
 from android_runner.wecom.account import AccountSwitchState, SafeAccountSwitcher
 from android_runner.wecom.campus_run import CampusRunState
 
@@ -57,7 +58,7 @@ def test_mvp_cleans_up_when_readiness_fails(monkeypatch):
     monkeypatch.setattr(runner, "confirm_free_run", lambda device, allow_start: CampusRunState.RUNNING)
     provider = Provider()
     provider.ready = lambda: False
-    result = runner.run_mvp(Device(), provider, Path("route.gpx"), SafeAccountSwitcher(lambda: None, lambda: None, lambda: True), allow_start=True)
+    result = runner.run_mvp(Device(), provider, Path("route.gpx"), SafeAccountSwitcher(lambda: None, lambda: None, lambda: True))
     assert result.account_state is None
     assert provider.calls == ["prepare", "stop"]
 
@@ -81,8 +82,31 @@ def test_mvp_never_confirms_free_run_without_single_use_intent(monkeypatch):
     provider = Provider()
     provider.ready = lambda: True
 
-    result = runner.run_mvp(Device(), provider, Path("route.gpx"), SafeAccountSwitcher(lambda: None, lambda: None, lambda: True), allow_start=True)
+    result = runner.run_mvp(Device(), provider, Path("route.gpx"), SafeAccountSwitcher(lambda: None, lambda: None, lambda: True))
 
     assert result.campus_state is CampusRunState.START_PROMPT
     assert clicks == []
     assert provider.calls == ["prepare", "stop"]
+
+
+def test_mvp_rejects_removed_allow_start_bypass():
+    with __import__("pytest").raises(TypeError):
+        runner.run_mvp(
+            Device(), Provider(), Path("route.gpx"),
+            SafeAccountSwitcher(lambda: None, lambda: None, lambda: True), allow_start=True,
+        )
+
+
+def test_mvp_cleanup_verification_failure_returns_safe_stop(monkeypatch):
+    monkeypatch.setattr(runner, "open_campus_run", lambda device: CampusRunState.START_PROMPT)
+
+    class UnsafeProvider(Provider):
+        def stop_verified(self):
+            return type("Result", (), {"ok": False})()
+
+    result = runner.run_mvp(
+        Device(), UnsafeProvider(), Path("route.gpx"),
+        SafeAccountSwitcher(lambda: None, lambda: None, lambda: True),
+    )
+
+    assert result.state is RunState.SAFE_STOP

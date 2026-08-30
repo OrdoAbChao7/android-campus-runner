@@ -10,6 +10,7 @@ from android_runner import runner
 from android_runner.intent import IntentUseRegistry, RunIntent, RunObservation, route_sha256
 from android_runner.wecom.campus_run import CampusRunState
 from android_runner.workflow import MultiRunResult, run_multi_account
+from android_runner.state import RunState
 
 
 # ---------------------------------------------------------------------------
@@ -67,8 +68,25 @@ def _make_fns(open_raises=False, confirm_raises=False):
     return open_fn, confirm_fn
 
 
-def _all_authorized(account: str) -> bool:
-    return True
+def _start_authorizations(accounts: list[str]):
+    now = datetime.now(timezone.utc)
+    registry = IntentUseRegistry()
+    intents = {}
+    for number, account in enumerate(accounts, start=1):
+        intent = RunIntent(
+            intent_id=f"direct-{number}", adb_serial="PHONE", device_fingerprint="fingerprint",
+            current_enterprise=account, target_enterprise=account, route_sha256="0" * 64,
+            not_before=now - timedelta(minutes=1), not_after=now + timedelta(minutes=1),
+            max_duration=timedelta(minutes=30), allowed_action_ids={"campus_run.start"},
+        )
+        registry.register(intent)
+        intents[account] = (intent, RunObservation("PHONE", "fingerprint", "0" * 64, now))
+    return intents, registry
+
+
+def _run_multi_authorized(**kwargs):
+    intents, registry = _start_authorizations(kwargs["accounts"])
+    return run_multi_account(**kwargs, intents=intents, intent_registry=registry)
 
 
 def test_multi_account_single_no_switch():
@@ -76,7 +94,7 @@ def test_multi_account_single_no_switch():
     provider = Provider()
     switches: list[str] = []
 
-    result = run_multi_account(
+    result = _run_multi_authorized(
         provider=provider,
         route=Path("route.gpx"),
         accounts=["企业A"],
@@ -84,7 +102,6 @@ def test_multi_account_single_no_switch():
         confirm_free_run_fn=_make_fns()[1],
         switch_account_fn=lambda name: switches.append(name) or True,
         device=Device(),
-        authorize_start=_all_authorized,
     )
 
     assert result.completed == ["企业A"]
@@ -99,7 +116,7 @@ def test_multi_account_two_accounts_switches_once():
     provider = Provider()
     switches: list[str] = []
 
-    result = run_multi_account(
+    result = _run_multi_authorized(
         provider=provider,
         route=Path("route.gpx"),
         accounts=["企业A", "企业B"],
@@ -107,7 +124,6 @@ def test_multi_account_two_accounts_switches_once():
         confirm_free_run_fn=_make_fns()[1],
         switch_account_fn=lambda name: switches.append(name) or True,
         device=Device(),
-        authorize_start=_all_authorized,
     )
 
     assert result.completed == ["企业A", "企业B"]
@@ -122,7 +138,7 @@ def test_multi_account_three_accounts_two_switches():
     provider = Provider()
     switches: list[str] = []
 
-    result = run_multi_account(
+    result = _run_multi_authorized(
         provider=provider,
         route=Path("route.gpx"),
         accounts=["企业A", "企业B", "企业C"],
@@ -130,7 +146,6 @@ def test_multi_account_three_accounts_two_switches():
         confirm_free_run_fn=_make_fns()[1],
         switch_account_fn=lambda name: switches.append(name) or True,
         device=Device(),
-        authorize_start=_all_authorized,
     )
 
     assert result.completed == ["企业A", "企业B", "企业C"]
@@ -152,7 +167,7 @@ def test_multi_account_route_failure_aborts_remaining():
             return type("R", (), {"ok": ok})()
 
     provider = FailOnSecond()
-    result = run_multi_account(
+    result = _run_multi_authorized(
         provider=provider,
         route=Path("route.gpx"),
         accounts=["企业A", "企业B", "企业C"],
@@ -160,7 +175,6 @@ def test_multi_account_route_failure_aborts_remaining():
         confirm_free_run_fn=_make_fns()[1],
         switch_account_fn=lambda name: True,
         device=Device(),
-        authorize_start=_all_authorized,
     )
 
     assert result.completed == ["企业A"]
@@ -168,11 +182,35 @@ def test_multi_account_route_failure_aborts_remaining():
     assert provider.calls[-1] == "stop"
 
 
+def test_failed_stop_after_first_account_blocks_next_account():
+    class StopFailsAfterRoute(Provider):
+        def stop_verified(self):
+            self.calls.append("verified-stop")
+            return type("R", (), {"ok": False})()
+
+    provider = StopFailsAfterRoute()
+    confirmations = []
+    result = _run_multi_authorized(
+        provider=provider,
+        route=Path("route.gpx"),
+        accounts=["企业A", "企业B"],
+        open_campus_run_fn=lambda device: None,
+        confirm_free_run_fn=lambda device, *, allow_start: confirmations.append(allow_start),
+        switch_account_fn=lambda name: True,
+        device=Device(),
+    )
+
+    assert confirmations == [True]
+    assert provider.calls.count("route") == 1
+    assert result.completed == []
+    assert result.state is RunState.SAFE_STOP
+
+
 def test_multi_account_switch_failure_aborts_remaining():
     """If switch fails, all subsequent accounts are added to failed."""
     provider = Provider()
 
-    result = run_multi_account(
+    result = _run_multi_authorized(
         provider=provider,
         route=Path("route.gpx"),
         accounts=["企业A", "企业B", "企业C"],
@@ -180,7 +218,6 @@ def test_multi_account_switch_failure_aborts_remaining():
         confirm_free_run_fn=_make_fns()[1],
         switch_account_fn=lambda name: False,  # always fails
         device=Device(),
-        authorize_start=_all_authorized,
     )
 
     assert result.completed == ["企业A"]
@@ -192,7 +229,7 @@ def test_multi_account_open_failure_aborts():
     """If open_campus_run raises, current account is failed and loop stops."""
     provider = Provider()
 
-    result = run_multi_account(
+    result = _run_multi_authorized(
         provider=provider,
         route=Path("route.gpx"),
         accounts=["企业A", "企业B"],
@@ -200,7 +237,6 @@ def test_multi_account_open_failure_aborts():
         confirm_free_run_fn=_make_fns()[1],
         switch_account_fn=lambda name: True,
         device=Device(),
-        authorize_start=_all_authorized,
     )
 
     assert result.completed == []
@@ -227,7 +263,7 @@ def test_multi_account_rejects_keep_gps_execution_path():
 
 def test_multi_account_empty_accounts_returns_empty():
     provider = Provider()
-    result = run_multi_account(
+    result = _run_multi_authorized(
         provider=provider,
         route=Path("route.gpx"),
         accounts=[],
@@ -259,6 +295,21 @@ def test_mvp_multi_account_prepare_failure_marks_all_failed(monkeypatch):
     )
     assert result.failed == ["企业A", "企业B"]
     assert result.completed == []
+
+
+def test_mvp_multi_account_cleanup_failure_returns_safe_stop():
+    class BadProvider(Provider):
+        def prepare(self):
+            return type("R", (), {"ok": False})()
+
+        def stop_verified(self):
+            return type("R", (), {"ok": False})()
+
+    result = runner.run_multi_account_mvp(
+        device=Device(), provider=BadProvider(), route=Path("route.gpx"), accounts=["企业A"],
+    )
+
+    assert result.state is RunState.SAFE_STOP
 
 
 def test_mvp_multi_account_ready_check_failure_marks_all_failed(monkeypatch):

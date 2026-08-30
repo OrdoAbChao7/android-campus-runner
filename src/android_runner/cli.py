@@ -44,7 +44,7 @@ def main() -> int:
 
     campus = sub.add_parser(
         "campus-run",
-        help="run campus-run for one or more WeCom accounts in sequence, GPS stays active between runs",
+        help="run campus-run for one or more WeCom accounts in sequence with verified GPS shutdown",
     )
     campus.add_argument("--config", required=True, help="GPS Locator provider config YAML")
     campus.add_argument("--route", required=True, help="GPX or KML route file")

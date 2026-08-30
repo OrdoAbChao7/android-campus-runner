@@ -53,3 +53,25 @@ def test_stop_verified_fails_when_simulation_never_stops():
 
     assert result.ok is False
     assert "simulationActive" in result.stderr
+
+
+def test_failed_stop_latches_provider_until_inactive_status_is_confirmed():
+    provider = GpsLocatorProvider(
+        {"prepare": ["gps", "prepare"], "stop": ["gps", "stop"], "status": ["gps", "status"]},
+        poll_interval=0,
+    )
+    calls = []
+    provider._run = lambda command: (
+        calls.append(command)
+        or ProviderResult(command, 0, '{"simulationActive": true}', "")
+    )
+
+    assert provider.stop_verified(timeout=0).ok is False
+    blocked_calls = len(calls)
+    assert provider.prepare().ok is False
+    assert provider.ready() is False
+    assert len(calls) == blocked_calls
+
+    provider._run = lambda command: ProviderResult(command, 0, '{"simulationActive": false}', "")
+    assert provider.stop_verified(timeout=0).ok is True
+    assert provider.prepare().ok is True
