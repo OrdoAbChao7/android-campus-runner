@@ -1,0 +1,5 @@
+# Task 3 brief — verified GPS lifecycle and safe workflow ordering
+
+Read this first; it is the complete requirements for Task 3.
+
+Update `src/android_runner/location/provider.py`, `src/android_runner/workflow.py`, `src/android_runner/runner.py`, and their tests. Provider readiness must be checked before any Campus Run start prompt or tap. Add a verified stop operation that calls the official GPS Locator stop command and polls status until `simulationActive == false`; timeout/failure must be represented as failure and block completion/next run. Remove or reject `keep_gps` in production execution paths. The default Campus Run flow must not tap “自由跑”; only a valid single-use `RunIntent` authorization may allow a start action. Preserve existing dry-run and test doubles. Add regression tests for ordering, no implicit tap, stop verification, and failed-stop SAFE_STOP. Run `pytest -q`, commit, and write `.superpowers/sdd/2026-08-31-agent-first-runner-plan/task-3-report.md`. Do not edit dashboard or account schema and do not push.

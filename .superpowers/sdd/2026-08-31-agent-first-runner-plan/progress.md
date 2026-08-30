@@ -17,3 +17,11 @@
 
 Ruling: Worktree Git index is sandbox-blocked, so implementation continues in the preserved branch `codex/ide-wip-preserve`; the separate worktree remains read-only reference material. Cost if wrong: branch isolation is weaker, but all changes stay on a non-main local branch and are reviewed before any push.
 
+Task 1: fix round 1/5 (4 addressed, 1 deferred to Task 5 — dashboard binding/token/path/keep-gps; commits cc14357..6124c50)
+Task 1: complete (commits cc14357..6124c50, review clean for task scope; Task 5 carries dashboard safety finding)
+Task 2: implementation complete pending review (commit 3f1bf95)
+Task 2: fix round 1/5 (3 addressed, 0 open; commits 3f1bf95..ea7c1f6)
+Task 2: fix round 2/5 (1 addressed, 0 open; commits ea7c1f6..56429a8)
+Task 2: fix round 3/5 (2 addressed, 0 open; commits 56429a8..33e7452)
+Task 2: fix round 4/5 (1 addressed, 0 open; commits 33e7452..d883251)
+Task 2: complete (commits 3f1bf95..d883251, review clean)
