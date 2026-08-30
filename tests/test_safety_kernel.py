@@ -234,3 +234,22 @@ def test_evidence_writer_redacts_escaped_and_multiline_quoted_values_without_hid
     assert "second bearer line" not in artifacts
     assert "tokenizer_started" in artifacts
     assert "tokenize credentialing continues" in artifacts
+
+
+def test_evidence_writer_redacts_underscore_prefixed_secret_labels_without_hiding_normal_words(tmp_path):
+    """Underscore-delimited labels redact complete values but ordinary words remain visible."""
+    writer = EvidenceWriter(tmp_path, "run-006")
+
+    writer.append_event(
+        "adapter_failed",
+        {
+            "message": 'X_TOKEN: leaked value; oauth_token="quoted leaked value"; API_CREDENTIAL spaced leaked value',
+            "detail": "tokenize credentialing continues",
+        },
+    )
+
+    artifacts = (tmp_path / "run-006" / "events.jsonl").read_text(encoding="utf-8")
+    assert "leaked value" not in artifacts
+    assert "quoted leaked value" not in artifacts
+    assert "spaced leaked value" not in artifacts
+    assert "tokenize credentialing continues" in artifacts

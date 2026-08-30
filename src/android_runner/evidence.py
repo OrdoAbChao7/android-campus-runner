@@ -12,7 +12,9 @@ from typing import Any
 
 
 _SECRET_LABEL = r"password|passwd|secret|token|authorization|cookie|credential|api[-_ ]?key|access[-_ ]?key"
-_SENSITIVE_KEY = re.compile(rf"(?<![A-Za-z0-9])(?:{_SECRET_LABEL})(?![A-Za-z0-9])", re.IGNORECASE)
+_LABEL_PREFIX = r"(?<![A-Za-z0-9])"
+_LABEL_SUFFIX = r"(?![A-Za-z0-9])"
+_SENSITIVE_KEY = re.compile(rf"{_LABEL_PREFIX}(?:{_SECRET_LABEL}){_LABEL_SUFFIX}", re.IGNORECASE)
 _SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 _REDACTED = "[REDACTED]"
 _BEARER_VALUE = re.compile(
@@ -20,20 +22,20 @@ _BEARER_VALUE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _QUOTED_NAMED_SECRET_VALUE = re.compile(
-    rf"\b(?P<label>{_SECRET_LABEL})\s*(?P<separator>[:=])\s*(?P<quote>['\"])(?P<value>(?:\\.|(?!(?P=quote)).)*)(?P=quote)",
+    rf"{_LABEL_PREFIX}(?P<label>{_SECRET_LABEL}){_LABEL_SUFFIX}\s*(?P<separator>[:=])\s*(?P<quote>['\"])(?P<value>(?:\\.|(?!(?P=quote)).)*)(?P=quote)",
     re.IGNORECASE | re.DOTALL,
 )
 _NAMED_SECRET_VALUE = re.compile(
-    rf"\b(?P<label>{_SECRET_LABEL})"
-    r"\s*(?P<separator>[:=])\s*[^\s,;]+",
-    re.IGNORECASE,
+    rf"{_LABEL_PREFIX}(?P<label>{_SECRET_LABEL}){_LABEL_SUFFIX}"
+    r"\s*(?P<separator>[:=])\s*[^\r\n,;]+",
+    re.IGNORECASE | re.DOTALL,
 )
 _SPACED_SECRET_VALUE = re.compile(
-    r"\b(?P<label>secret|token|credential)\s+[^\s,;]+",
-    re.IGNORECASE,
+    rf"{_LABEL_PREFIX}(?P<label>secret|token|credential){_LABEL_SUFFIX}\s+[^\r\n,;]+",
+    re.IGNORECASE | re.DOTALL,
 )
 _SENSITIVE_FRAGMENT = re.compile(
-    rf"(?<![A-Za-z0-9])(?:{_SECRET_LABEL})(?![A-Za-z0-9])",
+    rf"{_LABEL_PREFIX}(?:{_SECRET_LABEL}){_LABEL_SUFFIX}",
     re.IGNORECASE,
 )
 
