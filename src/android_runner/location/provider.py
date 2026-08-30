@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,11 +26,12 @@ def command_for_route(template: list[str], route: str | Path, serial: str = "") 
 
 
 class GpsLocatorProvider:
-    def __init__(self, command_template: list[str] | dict[str, list[str]], serial: str = "", cwd: str | Path | None = None, timeout: float = 300.0):
+    def __init__(self, command_template: list[str] | dict[str, list[str]], serial: str = "", cwd: str | Path | None = None, timeout: float = 300.0, poll_interval: float = 0.5):
         self.commands = command_template if isinstance(command_template, dict) else {"prepare": command_template, "status": command_template, "route": command_template, "stop": command_template}
         self.serial = serial
         self.cwd = str(cwd) if cwd else None
         self.timeout = timeout
+        self.poll_interval = poll_interval
         self.last_result: ProviderResult | None = None
 
     def prepare(self) -> ProviderResult:
@@ -59,6 +61,36 @@ class GpsLocatorProvider:
 
     def stop(self) -> ProviderResult:
         return self._run(command_for_route(self.commands["stop"], "", self.serial))
+
+    def stop_verified(self, *, timeout: float | None = None) -> ProviderResult:
+        """Stop GPS Locator and confirm its simulation is no longer active."""
+        stopped = self.stop()
+        if not stopped.ok:
+            return stopped
+
+        deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
+        last_status: ProviderResult | None = None
+        while True:
+            last_status = self.status()
+            if last_status.ok:
+                try:
+                    payload = json.loads(last_status.stdout.strip().splitlines()[-1])
+                except (ValueError, IndexError):
+                    payload = None
+                if isinstance(payload, dict) and payload.get("simulationActive") is False:
+                    self.last_result = stopped
+                    return stopped
+            if time.monotonic() >= deadline:
+                stdout = last_status.stdout if last_status is not None else ""
+                failure = ProviderResult(
+                    stopped.command,
+                    1,
+                    stdout,
+                    "GPS Locator stop could not verify simulationActive == false",
+                )
+                self.last_result = failure
+                return failure
+            time.sleep(self.poll_interval)
 
     def report(self) -> ProviderResult | None:
         template = self.commands.get("report")

@@ -31,3 +31,25 @@ def test_prepare_launches_provider_app_when_configured():
     provider._run = lambda command: (calls.append(command) or ProviderResult(command, 0, "", ""))
     assert provider.prepare().ok
     assert calls == [["prep"], ["launch", "PHONE"]]
+
+
+def test_stop_verified_waits_for_inactive_simulation():
+    provider = GpsLocatorProvider({"stop": ["gps", "stop"], "status": ["gps", "status"]}, poll_interval=0)
+    responses = iter([
+        ProviderResult(["gps", "stop"], 0, "", ""),
+        ProviderResult(["gps", "status"], 0, '{"simulationActive": true}', ""),
+        ProviderResult(["gps", "status"], 0, '{"simulationActive": false}', ""),
+    ])
+    provider._run = lambda command: next(responses)
+
+    assert provider.stop_verified(timeout=1).ok is True
+
+
+def test_stop_verified_fails_when_simulation_never_stops():
+    provider = GpsLocatorProvider({"stop": ["gps", "stop"], "status": ["gps", "status"]}, poll_interval=0)
+    provider._run = lambda command: ProviderResult(command, 0, '{"simulationActive": true}', "")
+
+    result = provider.stop_verified(timeout=0)
+
+    assert result.ok is False
+    assert "simulationActive" in result.stderr

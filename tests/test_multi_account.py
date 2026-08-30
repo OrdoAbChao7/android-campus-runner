@@ -1,11 +1,13 @@
 """Tests for the multi-account campus-run flow."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from android_runner import runner
+from android_runner.intent import IntentUseRegistry, RunIntent, RunObservation, route_sha256
 from android_runner.wecom.campus_run import CampusRunState
 from android_runner.workflow import MultiRunResult, run_multi_account
 
@@ -65,6 +67,10 @@ def _make_fns(open_raises=False, confirm_raises=False):
     return open_fn, confirm_fn
 
 
+def _all_authorized(account: str) -> bool:
+    return True
+
+
 def test_multi_account_single_no_switch():
     """One account: route runs, no switch needed, provider stopped."""
     provider = Provider()
@@ -78,6 +84,7 @@ def test_multi_account_single_no_switch():
         confirm_free_run_fn=_make_fns()[1],
         switch_account_fn=lambda name: switches.append(name) or True,
         device=Device(),
+        authorize_start=_all_authorized,
     )
 
     assert result.completed == ["企业A"]
@@ -100,6 +107,7 @@ def test_multi_account_two_accounts_switches_once():
         confirm_free_run_fn=_make_fns()[1],
         switch_account_fn=lambda name: switches.append(name) or True,
         device=Device(),
+        authorize_start=_all_authorized,
     )
 
     assert result.completed == ["企业A", "企业B"]
@@ -122,6 +130,7 @@ def test_multi_account_three_accounts_two_switches():
         confirm_free_run_fn=_make_fns()[1],
         switch_account_fn=lambda name: switches.append(name) or True,
         device=Device(),
+        authorize_start=_all_authorized,
     )
 
     assert result.completed == ["企业A", "企业B", "企业C"]
@@ -151,6 +160,7 @@ def test_multi_account_route_failure_aborts_remaining():
         confirm_free_run_fn=_make_fns()[1],
         switch_account_fn=lambda name: True,
         device=Device(),
+        authorize_start=_all_authorized,
     )
 
     assert result.completed == ["企业A"]
@@ -170,6 +180,7 @@ def test_multi_account_switch_failure_aborts_remaining():
         confirm_free_run_fn=_make_fns()[1],
         switch_account_fn=lambda name: False,  # always fails
         device=Device(),
+        authorize_start=_all_authorized,
     )
 
     assert result.completed == ["企业A"]
@@ -189,6 +200,7 @@ def test_multi_account_open_failure_aborts():
         confirm_free_run_fn=_make_fns()[1],
         switch_account_fn=lambda name: True,
         device=Device(),
+        authorize_start=_all_authorized,
     )
 
     assert result.completed == []
@@ -196,22 +208,21 @@ def test_multi_account_open_failure_aborts():
     assert provider.calls[-1] == "stop"
 
 
-def test_multi_account_gps_not_stopped_when_keep_gps():
-    """Provider.stop is NOT called when stop_provider_on_finish=False."""
+def test_multi_account_rejects_keep_gps_execution_path():
+    """A production flow cannot opt out of verified provider shutdown."""
     provider = Provider()
 
-    run_multi_account(
-        provider=provider,
-        route=Path("route.gpx"),
-        accounts=["企业A"],
-        open_campus_run_fn=_make_fns()[0],
-        confirm_free_run_fn=_make_fns()[1],
-        switch_account_fn=lambda name: True,
-        device=Device(),
-        stop_provider_on_finish=False,
-    )
-
-    assert "stop" not in provider.calls
+    with pytest.raises(TypeError):
+        run_multi_account(
+            provider=provider,
+            route=Path("route.gpx"),
+            accounts=["企业A"],
+            open_campus_run_fn=_make_fns()[0],
+            confirm_free_run_fn=_make_fns()[1],
+            switch_account_fn=lambda name: True,
+            device=Device(),
+            stop_provider_on_finish=False,
+        )
 
 
 def test_multi_account_empty_accounts_returns_empty():
@@ -266,7 +277,7 @@ def test_mvp_multi_account_ready_check_failure_marks_all_failed(monkeypatch):
     assert result.completed == []
 
 
-def test_mvp_multi_account_full_flow(monkeypatch):
+def test_mvp_multi_account_full_flow(monkeypatch, tmp_path):
     """Integration: two accounts complete successfully via run_multi_account_mvp."""
     monkeypatch.setattr(runner, "open_campus_run", lambda device: CampusRunState.START_PROMPT)
     monkeypatch.setattr(runner, "confirm_free_run", lambda device, allow_start: CampusRunState.RUNNING)
@@ -287,12 +298,28 @@ def test_mvp_multi_account_full_flow(monkeypatch):
     monkeypatch.setattr(runner, "WeComEnterpriseSwitcher", FakeSwitcher)
 
     provider = Provider()
+    route = tmp_path / "route.gpx"
+    route.write_text("route", encoding="utf-8")
+    now = datetime.now(timezone.utc)
+    registry = IntentUseRegistry()
+    intents = {}
+    for number, account in enumerate(["企业A", "企业B"], start=1):
+        intent = RunIntent(
+            intent_id=f"intent-{number}", adb_serial="PHONE", device_fingerprint="fingerprint",
+            current_enterprise=account, target_enterprise=account, route_sha256=route_sha256(route),
+            not_before=now - timedelta(minutes=1), not_after=now + timedelta(minutes=1),
+            max_duration=timedelta(minutes=30), allowed_action_ids={"campus_run.start"},
+        )
+        registry.register(intent)
+        intents[account] = (intent, RunObservation("PHONE", "fingerprint", route_sha256(route), now))
     result = runner.run_multi_account_mvp(
         device=Device(),
         provider=provider,
-        route=Path("route.gpx"),
+        route=route,
         accounts=["企业A", "企业B"],
         current_account="企业A",
+        intents=intents,
+        intent_registry=registry,
     )
 
     assert result.completed == ["企业A", "企业B"]

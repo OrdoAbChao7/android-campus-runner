@@ -7,6 +7,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from .wecom.account import AccountSwitchState
+from .state import RunState
 
 log = logging.getLogger(__name__)
 
@@ -14,6 +15,7 @@ log = logging.getLogger(__name__)
 class RouteProvider(Protocol):
     def start_route(self, route: Path): ...
     def stop(self): ...
+    def stop_verified(self): ...
 
 
 @dataclass
@@ -21,23 +23,32 @@ class MultiRunResult:
     """Summary of a multi-account campus run session."""
     completed: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
+    state: RunState = RunState.IDLE
 
     @property
     def total(self) -> int:
         return len(self.completed) + len(self.failed)
 
 
+def stop_provider_verified(provider: RouteProvider) -> bool:
+    """Use the verified GPS Locator shutdown when available for production."""
+    try:
+        result = provider.stop_verified() if hasattr(provider, "stop_verified") else provider.stop()
+    except Exception:
+        log.warning("provider stop failed", exc_info=True)
+        return False
+    return bool(getattr(result, "ok", True))
+
+
 def run_route_with_cleanup(provider: RouteProvider, route: Path) -> bool:
+    route_ok = False
     try:
         result = provider.start_route(route)
-        return bool(getattr(result, "ok", True))
+        route_ok = bool(getattr(result, "ok", True))
     except Exception:
-        return False
-    finally:
-        try:
-            provider.stop()
-        except Exception:
-            pass
+        log.warning("route failed", exc_info=True)
+    stopped = stop_provider_verified(provider)
+    return route_ok and stopped
 
 
 def run_route_then_switch(provider: RouteProvider, route: Path, switcher) -> AccountSwitchState:
@@ -45,19 +56,6 @@ def run_route_then_switch(provider: RouteProvider, route: Path, switcher) -> Acc
     if not run_route_with_cleanup(provider, route):
         return AccountSwitchState.ABORT
     return switcher.switch()
-
-
-def run_route_no_stop(provider: RouteProvider, route: Path) -> bool:
-    """Start a route without stopping the provider afterwards.
-
-    GPS stays active so the next run can reuse the same mock-location session.
-    """
-    try:
-        result = provider.start_route(route)
-        return bool(getattr(result, "ok", True))
-    except Exception:
-        log.warning("route failed", exc_info=True)
-        return False
 
 
 def run_multi_account(
@@ -69,22 +67,23 @@ def run_multi_account(
     switch_account_fn: Callable[[str], bool],
     device,
     *,
-    stop_provider_on_finish: bool = True,
+    authorize_start: Callable[[str], bool] | None = None,
 ) -> MultiRunResult:
-    """Run campus-run once per account, keeping GPS active between runs.
-
-    For each account in *accounts*:
-    1. Navigate to the WeCom campus-run start prompt.
-    2. Play the GPX/KML route (GPS provider is NOT stopped between iterations).
-    3. Switch to the next account (if any remain).
-
-    The provider is stopped once after all accounts finish (or on abort),
-    unless *stop_provider_on_finish* is False.
-    """
+    """Run each account only after an explicit authorization callback allows it."""
     result = MultiRunResult()
+    if hasattr(provider, "ready") and not provider.ready():
+        result.failed.extend(accounts)
+        result.state = RunState.SAFE_STOP
+        stop_provider_verified(provider)
+        return result
     try:
         for i, account in enumerate(accounts):
             log.info("[%d/%d] starting run for account: %s", i + 1, len(accounts), account)
+            if authorize_start is None or not authorize_start(account):
+                log.error("no valid start authorization for account: %s", account)
+                result.failed.append(account)
+                result.state = RunState.SAFE_STOP
+                break
             try:
                 open_campus_run_fn(device)
                 confirm_free_run_fn(device, allow_start=True)
@@ -93,7 +92,12 @@ def run_multi_account(
                 result.failed.append(account)
                 break
 
-            ok = run_route_no_stop(provider, route)
+            try:
+                route_result = provider.start_route(route)
+                ok = bool(getattr(route_result, "ok", True))
+            except Exception:
+                log.warning("route failed", exc_info=True)
+                ok = False
             if not ok:
                 log.error("route failed for account: %s", account)
                 result.failed.append(account)
@@ -112,9 +116,9 @@ def run_multi_account(
                     result.failed.extend(accounts[i + 1:])
                     break
     finally:
-        if stop_provider_on_finish:
-            try:
-                provider.stop()
-            except Exception:
-                log.warning("provider stop failed", exc_info=True)
+        if not stop_provider_verified(provider):
+            result.completed.clear()
+            if accounts:
+                result.failed = list(dict.fromkeys(result.failed + accounts))
+            result.state = RunState.SAFE_STOP
     return result

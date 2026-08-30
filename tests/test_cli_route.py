@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from android_runner.cli import load_provider_config
+import pytest
+
+from android_runner.cli import load_provider_config, main
 
 
 def test_load_provider_config_expands_commands(tmp_path: Path):
@@ -18,3 +20,18 @@ def test_load_provider_config_expands_commands(tmp_path: Path):
     loaded = load_provider_config(config)
     assert loaded["serial"] == "demo"
     assert loaded["commands"]["route"][-1] == "{serial}"
+
+
+def test_campus_cli_rejects_keep_gps(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "android-runner", "campus-run", "--config", "provider.yaml", "--route", "route.gpx",
+            "--serial", "PHONE", "--accounts", "enterprise", "--keep-gps",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 2

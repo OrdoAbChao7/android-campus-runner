@@ -68,11 +68,6 @@ def main() -> int:
         metavar="ENTERPRISE",
         help="enterprise currently active on the device; overrides the 'current' flag in accounts.yaml",
     )
-    campus.add_argument(
-        "--keep-gps",
-        action="store_true",
-        help="do not stop the GPS provider after all runs finish",
-    )
 
     args = parser.parse_args()
 
@@ -126,7 +121,6 @@ def main() -> int:
             route=Path(args.route),
             accounts=enterprise_list,
             current_account=current,
-            stop_provider_on_finish=not args.keep_gps,
         )
         print(f"completed: {multi_result.completed}")
         if multi_result.failed:
