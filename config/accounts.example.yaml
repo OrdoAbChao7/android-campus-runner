@@ -7,20 +7,20 @@
 # ----------------
 # enterprise : the exact display name shown in the WeCom account switcher
 # phone      : mobile number used to log in (string, keep leading zeros)
-# password   : login password (string)
+# credential_ref : reference to a secret managed outside this file (optional)
 # current    : (optional) set to true for the account that is active on the
 #              device when the runner starts; used to avoid a redundant switch
 
 accounts:
   - enterprise: "企业名称A"
     phone: "13800000001"
-    password: "your_password_here"
+    credential_ref: "env:WECOM_ACCOUNT_A"
     current: true
 
   - enterprise: "企业名称B"
     phone: "13800000002"
-    password: "your_password_here"
+    credential_ref: "env:WECOM_ACCOUNT_B"
 
   - enterprise: "企业名称C"
     phone: "13800000003"
-    password: "your_password_here"
+    credential_ref: "env:WECOM_ACCOUNT_C"

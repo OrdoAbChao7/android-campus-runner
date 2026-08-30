@@ -7,11 +7,11 @@ from pathlib import Path
 import yaml
 
 
-@dataclass
+@dataclass(frozen=True)
 class Account:
     enterprise: str
     phone: str
-    password: str
+    credential_ref: str | None = None
     current: bool = False
 
     def __post_init__(self) -> None:
@@ -19,15 +19,17 @@ class Account:
             raise ValueError("account 'enterprise' must not be empty")
         if not self.phone:
             raise ValueError("account 'phone' must not be empty")
-        if not self.password:
-            raise ValueError("account 'password' must not be empty")
+        if self.credential_ref is not None and not self.credential_ref.strip():
+            raise ValueError("account 'credential_ref' must not be empty")
 
 
 def load_accounts(path: str | Path) -> list[Account]:
     """Parse *path* and return a list of :class:`Account` objects.
 
     The file must be YAML with a top-level ``accounts`` list.  Each entry
-    must have ``enterprise``, ``phone``, and ``password`` keys.
+    must have ``enterprise`` and ``phone`` keys. Credentials are represented
+    by an optional ``credential_ref``; plaintext credential fields are never
+    accepted.
 
     Raises
     ------
@@ -44,13 +46,23 @@ def load_accounts(path: str | Path) -> list[Account]:
     for i, entry in enumerate(raw["accounts"]):
         if not isinstance(entry, dict):
             raise ValueError(f"{path}: accounts[{i}] must be a mapping")
-        missing = [k for k in ("enterprise", "phone", "password") if not entry.get(k)]
+        forbidden = {k for k in ("password", "passwd") if k in entry}
+        if forbidden:
+            raise ValueError(
+                f"{path}: accounts[{i}] contains a forbidden plaintext credential field; "
+                "use 'credential_ref'"
+            )
+        missing = [k for k in ("enterprise", "phone") if not entry.get(k)]
         if missing:
             raise ValueError(f"{path}: accounts[{i}] missing required fields: {missing}")
         accounts.append(Account(
             enterprise=str(entry["enterprise"]).strip(),
             phone=str(entry["phone"]).strip(),
-            password=str(entry["password"]),
+            credential_ref=(
+                str(entry["credential_ref"]).strip()
+                if entry.get("credential_ref") is not None
+                else None
+            ),
             current=bool(entry.get("current", False)),
         ))
 
