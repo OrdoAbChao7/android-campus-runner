@@ -11,9 +11,31 @@ from threading import Lock
 from typing import Any
 
 
-_SENSITIVE_KEY = re.compile(r"password|passwd|secret|token|authorization|cookie|credential", re.IGNORECASE)
+_SENSITIVE_KEY = re.compile(
+    r"password|passwd|secret|token|authorization|cookie|credential|api[-_ ]?key|access[-_ ]?key",
+    re.IGNORECASE,
+)
 _SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 _REDACTED = "[REDACTED]"
+_BEARER_VALUE = re.compile(r"\bBearer\s+[^\s,;]+", re.IGNORECASE)
+_NAMED_SECRET_VALUE = re.compile(
+    r"\b(?P<label>password|passwd|secret|token|authorization|cookie|credential|api[-_ ]?key|access[-_ ]?key)"
+    r"\s*(?P<separator>[:=])\s*[^\s,;]+",
+    re.IGNORECASE,
+)
+_SPACED_SECRET_VALUE = re.compile(
+    r"\b(?P<label>secret|token|credential)\s+[^\s,;]+",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_text(value: str) -> str:
+    value = _BEARER_VALUE.sub(f"Bearer {_REDACTED}", value)
+    value = _NAMED_SECRET_VALUE.sub(
+        lambda match: f"{match.group('label')}{match.group('separator')}{_REDACTED}",
+        value,
+    )
+    return _SPACED_SECRET_VALUE.sub(lambda match: f"{match.group('label')} {_REDACTED}", value)
 
 
 def sanitize_evidence(value: Any) -> Any:
@@ -27,9 +49,11 @@ def sanitize_evidence(value: Any) -> Any:
         return [sanitize_evidence(item) for item in value]
     if isinstance(value, datetime):
         return value.isoformat()
-    if value is None or isinstance(value, str | int | float | bool):
+    if isinstance(value, str):
+        return _sanitize_text(value)
+    if value is None or isinstance(value, int | float | bool):
         return value
-    return str(value)
+    return _sanitize_text(str(value))
 
 
 class EvidenceWriter:

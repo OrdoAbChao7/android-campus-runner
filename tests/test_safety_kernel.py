@@ -62,6 +62,7 @@ def test_intent_consumption_rejects_replay_and_duplicate_intent_id():
     """A consumed id must not authorize a second start, even from a copied intent."""
     registry = IntentUseRegistry()
     intent = make_intent()
+    registry.register(intent)
 
     registry.consume(intent, observation(), "start-route")
 
@@ -69,6 +70,19 @@ def test_intent_consumption_rejects_replay_and_duplicate_intent_id():
         registry.consume(intent, observation(), "start-route")
     with pytest.raises(IntentReplayError):
         registry.consume(replace(intent, route_sha256="b" * 64), observation(route_sha256="b" * 64), "start-route")
+
+
+def test_intent_consumption_rejects_mutated_copy_before_original_is_consumed():
+    """A serial or route changed via ``replace`` cannot stand in for the issued intent."""
+    registry = IntentUseRegistry()
+    intent = make_intent()
+    registry.register(intent)
+    changed = replace(intent, adb_serial="other-device", route_sha256="b" * 64)
+
+    with pytest.raises(IntentReplayError, match="binding"):
+        registry.consume(changed, observation(adb_serial="other-device", route_sha256="b" * 64), "start-route")
+
+    registry.consume(intent, observation(), "start-route")
 
 
 def test_intent_is_immutable():
@@ -115,17 +129,46 @@ def test_state_machine_can_enter_safe_stop_from_any_in_progress_state():
         machine.transition(RunState.PREFLIGHT_OK)
 
 
+def test_state_machine_journals_non_state_input_as_a_rejected_transition(tmp_path):
+    """An adapter bug must produce the typed transition error rather than an AttributeError."""
+    writer = EvidenceWriter(tmp_path, "run-003")
+    machine = StateMachine(journal=writer)
+
+    with pytest.raises(InvalidStateTransition):
+        machine.transition("not-a-state")  # type: ignore[arg-type]
+
+    event = json.loads((tmp_path / "run-003" / "events.jsonl").read_text(encoding="utf-8").strip())
+    assert event["event"] == "transition_rejected"
+    assert event["payload"]["to_state"] == "INVALID:str"
+
+
 def test_evidence_writer_redacts_sensitive_values_from_events_and_snapshots(tmp_path):
     """Secrets passed by an adapter must never reach persisted evidence artifacts."""
     writer = EvidenceWriter(tmp_path, "run-002")
 
-    writer.append_event("adapter_failed", {"password": "hunter2", "detail": "timeout"})
+    writer.append_event(
+        "adapter_failed",
+        {
+            "password": "hunter2",
+            "message": "request failed: Bearer event-bearer-token token=event-token credential: event-credential",
+        },
+    )
     snapshot_path = writer.write_snapshot(
         "ui-state",
-        {"authorization": "Bearer secret-token", "visible_text": "Campus Run"},
+        {
+            "authorization": "Bearer secret-token",
+            "exception_text": "provider failed with Bearer snapshot-bearer-token; token: snapshot-token; credential=snapshot-credential",
+            "visible_text": "Campus Run",
+        },
     )
 
     artifacts = (tmp_path / "run-002" / "events.jsonl").read_text(encoding="utf-8") + snapshot_path.read_text(encoding="utf-8")
     assert "hunter2" not in artifacts
     assert "secret-token" not in artifacts
+    assert "event-bearer-token" not in artifacts
+    assert "event-token" not in artifacts
+    assert "event-credential" not in artifacts
+    assert "snapshot-bearer-token" not in artifacts
+    assert "snapshot-token" not in artifacts
+    assert "snapshot-credential" not in artifacts
     assert "Campus Run" in artifacts

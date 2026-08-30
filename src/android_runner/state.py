@@ -28,10 +28,10 @@ class RunState(Enum):
 class InvalidStateTransition(RuntimeError):
     """An operation attempted to skip or leave a terminal safety state."""
 
-    def __init__(self, from_state: RunState, to_state: RunState) -> None:
+    def __init__(self, from_state: RunState, to_state: object) -> None:
         self.from_state = from_state
         self.to_state = to_state
-        super().__init__(f"illegal state transition: {from_state.name} -> {to_state.name}")
+        super().__init__(f"illegal state transition: {from_state.name} -> {_state_label(to_state)}")
 
 
 class EvidenceJournal(Protocol):
@@ -58,6 +58,12 @@ _ORDERED_STATES = (
 _NEXT_STATE = {before: after for before, after in zip(_ORDERED_STATES, _ORDERED_STATES[1:])}
 
 
+def _state_label(value: object) -> str:
+    if isinstance(value, RunState):
+        return value.name
+    return f"INVALID:{type(value).__name__}"
+
+
 class StateMachine:
     """Permits only the documented workflow sequence or an immediate safe stop."""
 
@@ -72,6 +78,12 @@ class StateMachine:
     def transition(self, to_state: RunState) -> None:
         """Advance one documented step, or record and reject the attempted jump."""
         from_state = self._state
+        if not isinstance(to_state, RunState):
+            self._journal_event(
+                "transition_rejected",
+                {"from_state": from_state.name, "to_state": _state_label(to_state)},
+            )
+            raise InvalidStateTransition(from_state, to_state)
         permitted = _NEXT_STATE.get(from_state) is to_state
         safe_stop = to_state is RunState.SAFE_STOP and from_state not in {RunState.DONE, RunState.SAFE_STOP}
         if not (permitted or safe_stop):

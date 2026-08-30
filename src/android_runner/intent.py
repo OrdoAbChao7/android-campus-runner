@@ -65,6 +65,7 @@ class RunIntent:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "allowed_action_ids", frozenset(self.allowed_action_ids))
+        object.__setattr__(self, "route_sha256", self.route_sha256.lower())
         for name in (
             "intent_id",
             "adb_serial",
@@ -102,16 +103,30 @@ class RunIntent:
 
 
 class IntentUseRegistry:
-    """In-memory, concurrency-safe record of intent ids consumed by this process."""
+    """In-memory, concurrency-safe registry of issued and consumed intent bindings."""
 
     def __init__(self) -> None:
+        self._issued: dict[str, RunIntent] = {}
         self._consumed_ids: set[str] = set()
         self._lock = Lock()
+
+    def register(self, intent: RunIntent) -> None:
+        """Bind an issued id to its full immutable content before it can be consumed."""
+        with self._lock:
+            existing = self._issued.get(intent.intent_id)
+            if existing is not None and existing != intent:
+                raise IntentReplayError(f"intent id binding does not match issued intent: {intent.intent_id}")
+            self._issued[intent.intent_id] = intent
 
     def consume(self, intent: RunIntent, observation: RunObservation, action_id: str) -> None:
         """Validate and atomically consume an intent, rejecting replayed ids."""
         intent.validate(observation, action_id)
         with self._lock:
+            issued = self._issued.get(intent.intent_id)
+            if issued is None:
+                raise IntentValidationError(f"intent id has not been registered: {intent.intent_id}")
+            if issued != intent:
+                raise IntentReplayError(f"intent id binding does not match issued intent: {intent.intent_id}")
             if intent.intent_id in self._consumed_ids:
                 raise IntentReplayError(f"intent id already consumed: {intent.intent_id}")
             self._consumed_ids.add(intent.intent_id)
