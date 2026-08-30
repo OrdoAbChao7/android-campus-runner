@@ -44,7 +44,7 @@ def main() -> int:
 
     campus = sub.add_parser(
         "campus-run",
-        help="run campus-run for one or more WeCom accounts in sequence with verified GPS shutdown",
+        help="validate campus-run inputs; an external single-use RunIntent is required to start",
     )
     campus.add_argument("--config", required=True, help="GPS Locator provider config YAML")
     campus.add_argument("--route", required=True, help="GPX or KML route file")
@@ -102,6 +102,8 @@ def main() -> int:
         return 0 if result.ok else 1
 
     if args.command == "campus-run":
+        print("campus-run requires an externally provided single-use RunIntent; no Campus Run action was started")
+        return 1
         config = load_provider_config(args.config)
         serial = args.serial or str(config.get("serial", ""))
         provider = GpsLocatorProvider(config["commands"], serial=serial, cwd=config.get("working_directory"))

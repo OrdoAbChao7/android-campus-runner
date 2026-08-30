@@ -35,3 +35,14 @@ def test_campus_cli_rejects_keep_gps(monkeypatch):
         main()
 
     assert exc_info.value.code == 2
+
+
+def test_campus_cli_explains_that_external_runintent_is_required(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "sys.argv",
+        ["android-runner", "campus-run", "--config", "missing.yaml", "--route", "route.gpx",
+         "--serial", "PHONE", "--accounts", "enterprise"],
+    )
+
+    assert main() == 1
+    assert "RunIntent" in capsys.readouterr().out

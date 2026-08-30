@@ -50,3 +50,10 @@ def test_dashboard_config_does_not_persist_keep_gps(monkeypatch, tmp_path):
     assert response.status_code == 200
     assert "keep_gps" not in response.get_json()["config"]
     assert "keep_gps" not in config_path.read_text(encoding="utf-8")
+
+
+def test_dashboard_run_start_requires_external_runintent():
+    response = dashboard.app.test_client().post("/api/run/start", json={})
+
+    assert response.status_code == 409
+    assert "RunIntent" in response.get_json()["error"]

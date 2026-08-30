@@ -277,6 +277,9 @@ The test suite uses only stdlib and pytest — no device connection required.
 
 ## Safety notes
 
+- The CLI and dashboard currently do not accept or issue RunIntents. Their
+  campus-run start controls refuse execution until an external, single-use
+  `RunIntent` bridge is supplied; they never tap **自由跑** in that state.
 - `run_mvp` stops at the **自由跑** prompt unless it consumes a registered,
   single-use `RunIntent` whose observation matches the authorized action.
 - Each account has its own RunIntent and verified GPS shutdown; a stop

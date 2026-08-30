@@ -88,6 +88,12 @@ def run_multi_account_mvp(
     """
     if not accounts:
         return MultiRunResult()
+    if not intents or intent_registry is None:
+        return MultiRunResult(
+            failed=list(accounts),
+            state=RunState.SAFE_STOP,
+            message="external single-use RunIntent authorization is required; no Campus Run action was started",
+        )
 
     # Prepare the GPS provider once before any runs start.
     prepared = provider.prepare()

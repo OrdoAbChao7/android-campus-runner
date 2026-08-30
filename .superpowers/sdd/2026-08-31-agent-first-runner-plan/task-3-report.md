@@ -6,7 +6,7 @@
 - Moved provider preparation/readiness ahead of Campus Run navigation in `run_mvp`; readiness failure prevents the start prompt and invokes safe cleanup.
 - Removed the production `keep_gps` path from the CLI and workflow APIs. Completion now always performs verified shutdown.
 - Default flows do not tap `自由跑`. `run_mvp` consumes a registered, single-use `RunIntent` with matching `RunObservation` before confirmation; multi-account runner consumes one intent per account.
-- A verified-stop failure clears prior completion, marks remaining accounts failed, and exposes `RunState.SAFE_STOP` in `MultiRunResult`.
+- A verified-stop failure does not mark the failed account completed, prevents the next account, and exposes `RunState.SAFE_STOP` in `MultiRunResult`.
 
 ## Regression coverage
 
@@ -41,3 +41,10 @@ Verification after this fix round: `pytest -q` completed with `76 passed, 1 skip
 - Rewrote the README flow so it documents per-account intent consumption, readiness checks, and verified shutdown before account switching.
 
 Verification after this fix round: `python -m py_compile dashboard/app.py` and `pytest -q` completed with `78 passed, 1 skipped`.
+
+## Fix round 3
+
+- CLI and dashboard have no safe RunIntent input or issuance path, so their campus-run controls now explicitly refuse execution with a readable external-RunIntent requirement instead of silently attempting a run.
+- `run_multi_account_mvp()` similarly returns `SAFE_STOP` before provider preparation when intents are absent; no prompt or confirmation can occur.
+
+Verification after this fix round: `python -m py_compile dashboard/app.py` and `pytest -q` completed with `80 passed, 1 skipped`.

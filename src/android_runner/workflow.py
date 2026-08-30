@@ -25,6 +25,7 @@ class MultiRunResult:
     completed: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
     state: RunState = RunState.IDLE
+    message: str | None = None
 
     @property
     def total(self) -> int:

@@ -297,6 +297,19 @@ def test_mvp_multi_account_prepare_failure_marks_all_failed(monkeypatch):
     assert result.completed == []
 
 
+def test_mvp_multi_account_without_intents_refuses_before_provider_or_ui():
+    provider = Provider()
+
+    result = runner.run_multi_account_mvp(
+        device=Device(), provider=provider, route=Path("route.gpx"), accounts=["企业A"],
+    )
+
+    assert result.failed == ["企业A"]
+    assert result.state is RunState.SAFE_STOP
+    assert "RunIntent" in result.message
+    assert provider.calls == []
+
+
 def test_mvp_multi_account_cleanup_failure_returns_safe_stop():
     class BadProvider(Provider):
         def prepare(self):

@@ -508,67 +508,12 @@ def get_routes() -> Response:
 
 @app.route("/api/run/start", methods=["POST"])
 def run_start() -> Response:
-    """Start a campus-run task in a background thread.
-
-    Accepts optional JSON overrides::
-
-        {
-            "serial":        "...",
-            "route":         "filename.gpx",   # relative to routes/ or absolute
-            "accounts_file": "/path/to/accounts.yaml"
-        }
-
-    Returns 409 if a run is already in progress.
-    """
+    """Refuse execution until a future safe external RunIntent bridge exists."""
     with _state_lock:
         if _state.running:
             return _err("a run is already in progress", 409)
 
-    body = request.get_json(silent=True) or {}
-    cfg = _load_dashboard_config()
-
-    # Resolve overrides (request body takes precedence over dashboard.yaml).
-    serial: str = body.get("serial", cfg.get("serial", ""))
-    adb: str = body.get("adb", cfg.get("adb", DEFAULT_ADB))
-    gps_config: str = body.get("gps_config", cfg.get("gps_config", str(GPS_CONFIG_PATH)))
-
-    accounts_file: str = body.get("accounts_file", cfg.get("accounts_file", str(ACCOUNTS_PATH)))
-
-    route_raw: str = body.get("route", cfg.get("route", ""))
-    if not route_raw:
-        return _err("'route' is required — set it in config or pass it in the request")
-
-    # Resolve route path: if it's not absolute, look first in routes/ then BASE_DIR.
-    route_path = Path(route_raw)
-    if not route_path.is_absolute():
-        candidate = ROUTES_DIR / route_raw
-        if candidate.exists():
-            route_path = candidate
-        else:
-            route_path = BASE_DIR / route_raw
-
-    if not route_path.exists():
-        return _err(f"route file not found: {route_path}")
-
-    # Validate accounts file exists before spinning up the thread.
-    if not Path(accounts_file).exists():
-        return _err(f"accounts file not found: {accounts_file}")
-
-    thread = threading.Thread(
-        target=_run_task,
-        kwargs={
-            "serial": serial,
-            "adb": adb,
-            "gps_config_path": gps_config,
-            "route": str(route_path),
-            "accounts_file": accounts_file,
-        },
-        daemon=True,
-        name="campus-run",
-    )
-    thread.start()
-
-    return _ok(message="run started")
+    return _err("an externally provided single-use RunIntent is required; no Campus Run action was started", 409)
 
 
 @app.route("/api/run/stop", methods=["POST"])
