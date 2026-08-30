@@ -9,3 +9,4 @@ logs/*
 
 # Sensitive credentials — never commit the real file
 config/accounts.yaml
+.worktrees/
