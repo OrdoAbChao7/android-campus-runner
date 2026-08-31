@@ -77,7 +77,7 @@ def test_runner_rejects_actual_route_bytes_that_do_not_match_authorized_observat
     actual_route = tmp_path / "actual.gpx"
     actual_route.write_text("different route", encoding="utf-8")
     intent, observation = _intent_and_observation(authorized_route)
-    registry = IntentUseRegistry()
+    registry = IntentUseRegistry.production(tmp_path / "intent-use.sqlite3")
     registry.register(intent)
     provider = _PreparedProvider()
 
@@ -114,7 +114,7 @@ def test_dashboard_rejects_actual_route_bytes_before_constructing_adapters(monke
     authorized_route = tmp_path / "authorized.gpx"
     authorized_route.write_text("authorized route", encoding="utf-8")
     intent, observation = _intent_and_observation(authorized_route)
-    registry = IntentUseRegistry()
+    registry = IntentUseRegistry.production(tmp_path / "intent-use.sqlite3")
     registry.register(intent)
     constructed: list[str] = []
     monkeypatch.setattr(dashboard, "ACCOUNTS_PATH", accounts)
@@ -151,7 +151,7 @@ def test_dashboard_runs_one_guarded_multi_account_session_instead_of_single_acco
     )
     intent_a, observation_a = _intent_and_observation(route, enterprise="企业A")
     intent_b, observation_b = _intent_and_observation(route, enterprise="企业B")
-    registry = IntentUseRegistry()
+    registry = IntentUseRegistry.production(tmp_path / "intent-use.sqlite3")
     registry.register(intent_a)
     registry.register(intent_b)
     calls: list[list[str]] = []

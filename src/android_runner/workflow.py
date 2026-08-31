@@ -42,6 +42,8 @@ class MultiRunResult:
     failed: list[str] = field(default_factory=list)
     state: RunState = RunState.IDLE
     message: str | None = None
+    evidence_dir: Path | None = None
+    evidence_summary: Path | None = None
 
     @property
     def total(self) -> int:
