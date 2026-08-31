@@ -45,5 +45,5 @@ def test_dashboard_static_intent_validation_matches_runner_preconditions():
     assert "if not enterprises" in validator
     assert "intent.current_enterprise != enterprise" in validator
     assert "intent.target_enterprise != enterprise" in validator
-    assert 'intent.validate(observation, "campus_run.start")' in validator
+    assert 'validate_route_binding(route, intent, observation, "campus_run.start")' in validator
     assert "intent_registry.validate_registered(intent)" in validator

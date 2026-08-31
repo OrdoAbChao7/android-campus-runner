@@ -70,8 +70,12 @@ class GpsLocatorProvider:
             payload = json.loads(result.stdout.strip().splitlines()[-1])
         except (ValueError, IndexError):
             return False
-        return bool(payload.get("available") and payload.get("mockLocationReady")
-                    and payload.get("commandReady"))
+        return bool(
+            payload.get("available")
+            and payload.get("mockLocationReady")
+            and payload.get("commandReady")
+            and payload.get("simulationActive") is False
+        )
 
     def start_route(self, route: Path) -> ProviderResult:
         if self._unsafe_latched:

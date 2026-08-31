@@ -19,9 +19,9 @@ def test_report_uses_dedicated_report_command():
 
 def test_ready_requires_all_provider_flags():
     provider = GpsLocatorProvider({"status": ["gps", "status"]})
-    provider._run = lambda command: ProviderResult(command, 0, '{"available":true,"mockLocationReady":true,"commandReady":true}', "")
+    provider._run = lambda command: ProviderResult(command, 0, '{"available":true,"mockLocationReady":true,"commandReady":true,"simulationActive":false}', "")
     assert provider.ready() is True
-    provider._run = lambda command: ProviderResult(command, 0, '{"available":true,"mockLocationReady":false,"commandReady":true}', "")
+    provider._run = lambda command: ProviderResult(command, 0, '{"available":true,"mockLocationReady":false,"commandReady":true,"simulationActive":false}', "")
     assert provider.ready() is False
 
 

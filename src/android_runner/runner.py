@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Callable
 
-from .intent import IntentReservation, IntentUseRegistry, RunIntent, RunObservation
+from .intent import IntentReservation, IntentUseRegistry, RunIntent, RunObservation, validate_route_binding
 from .state import RunState
 from .wecom.campus_run import (
     CampusRunState,
@@ -25,10 +25,13 @@ class MvpRunResult:
 
 def _stop_safely(provider) -> bool:
     try:
-        result = provider.stop_verified() if hasattr(provider, "stop_verified") else provider.stop()
+        stop_verified = getattr(provider, "stop_verified", None)
+        if not callable(stop_verified):
+            return False
+        result = stop_verified()
     except Exception:
         return False
-    return bool(getattr(result, "ok", True))
+    return bool(getattr(result, "ok", False))
 
 
 def _cleanup_state(provider) -> RunState:
@@ -37,6 +40,7 @@ def _cleanup_state(provider) -> RunState:
 
 def _validate_multi_account_authorization(
     accounts: list[str],
+    route: Path,
     intents: dict[str, tuple[RunIntent, RunObservation]] | None,
     intent_registry: IntentUseRegistry | None,
     *,
@@ -66,7 +70,7 @@ def _validate_multi_account_authorization(
         if intent.current_enterprise != account or intent.target_enterprise != account:
             account_errors.append("enterprise binding mismatch")
         try:
-            intent.validate(observation, action_id)
+            validate_route_binding(route, intent, observation, action_id)
         except Exception as exc:
             account_errors.append(str(exc))
         try:
@@ -82,6 +86,7 @@ def _validate_multi_account_authorization(
 
 
 def _validate_single_authorization(
+    route: Path,
     intent: RunIntent | None,
     observation: RunObservation | None,
     intent_registry: IntentUseRegistry | None,
@@ -99,7 +104,7 @@ def _validate_single_authorization(
         return "invalid RunIntent authorization: intent, observation, and registry are required"
     errors: list[str] = []
     try:
-        intent.validate(observation, action_id)
+        validate_route_binding(route, intent, observation, action_id)
     except Exception as exc:
         errors.append(str(exc))
     try:
@@ -134,7 +139,7 @@ def run_mvp(
         )
     if has_authorization:
         authorization_error = _validate_single_authorization(
-            intent, observation, intent_registry, action_id=action_id,
+            route, intent, observation, intent_registry, action_id=action_id,
         )
         if authorization_error is not None:
             return MvpRunResult(CampusRunState.INIT, state=RunState.SAFE_STOP)
@@ -205,7 +210,7 @@ def run_multi_account_mvp(
     if not accounts:
         return MultiRunResult()
     authorization_error = _validate_multi_account_authorization(
-        accounts, intents, intent_registry,
+        accounts, route, intents, intent_registry,
     )
     if authorization_error is not None:
         return MultiRunResult(

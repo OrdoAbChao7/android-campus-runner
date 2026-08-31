@@ -38,12 +38,16 @@ class MultiRunResult:
 
 def stop_provider_verified(provider: RouteProvider) -> bool:
     """Use the verified GPS Locator shutdown when available for production."""
+    stop_verified = getattr(provider, "stop_verified", None)
+    if not callable(stop_verified):
+        log.error("provider does not support verified shutdown")
+        return False
     try:
-        result = provider.stop_verified() if hasattr(provider, "stop_verified") else provider.stop()
+        result = stop_verified()
     except Exception:
         log.warning("provider stop failed", exc_info=True)
         return False
-    return bool(getattr(result, "ok", True))
+    return bool(getattr(result, "ok", False))
 
 
 def run_route_with_cleanup(provider: RouteProvider, route: Path) -> bool:

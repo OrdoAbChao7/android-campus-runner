@@ -50,7 +50,13 @@ from android_runner.cli import DEFAULT_ADB, load_provider_config  # noqa: E402
 from android_runner.device import AndroidDevice  # noqa: E402
 from android_runner.location.provider import GpsLocatorProvider  # noqa: E402
 from android_runner.location.route import RouteError, validate_route  # noqa: E402
-from android_runner.intent import IntentUseRegistry, IntentValidationError, RunIntent, RunObservation  # noqa: E402
+from android_runner.intent import (  # noqa: E402
+    IntentUseRegistry,
+    IntentValidationError,
+    RunIntent,
+    RunObservation,
+    validate_route_binding,
+)
 from android_runner.runner import run_multi_account_mvp  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -286,6 +292,7 @@ def _validated_account(entry: object) -> dict:
 
 def _validate_run_intents(
     enterprises: list[str],
+    route: Path,
     intents: object,
     intent_registry: object,
 ) -> dict[str, tuple[RunIntent, RunObservation]]:
@@ -311,7 +318,7 @@ def _validate_run_intents(
         if intent.current_enterprise != enterprise or intent.target_enterprise != enterprise:
             raise IntentValidationError("RunIntent enterprise binding does not match account")
         try:
-            intent.validate(observation, "campus_run.start")
+            validate_route_binding(route, intent, observation, "campus_run.start")
             # This verifies the exact issued binding has not been consumed or
             # reserved by another run before any adapter is created.
             intent_registry.validate_registered(intent)
@@ -345,7 +352,12 @@ def _run_task(
         route_path = _resolve_route(route)
         loaded_accounts = load_accounts(ACCOUNTS_PATH)
         enterprise_list = ordered_enterprises(loaded_accounts)
-        validated_intents = _validate_run_intents(enterprise_list, intents, intent_registry)
+        validated_intents = _validate_run_intents(
+            enterprise_list,
+            route_path,
+            intents,
+            intent_registry,
+        )
     except (Exception,) as exc:
         log.info("refusing dashboard run before provider/UI work: %s", exc)
         return

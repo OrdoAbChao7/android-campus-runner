@@ -33,6 +33,34 @@ def route_sha256(route: Path) -> str:
     return digest.hexdigest()
 
 
+def validate_route_binding(
+    route: Path,
+    intent: "RunIntent",
+    observation: "RunObservation",
+    action_id: str,
+) -> str:
+    """Validate an authorization against the exact route bytes about to run.
+
+    Callers must not rely solely on the digest supplied by an external
+    observation: the route selected at runtime is re-hashed here and compared
+    to both immutable authorization objects before any adapter is touched.
+    """
+    if not isinstance(intent, RunIntent):
+        raise IntentValidationError("RunIntent is required")
+    if not isinstance(observation, RunObservation):
+        raise IntentValidationError("RunObservation is required")
+    try:
+        actual_digest = route_sha256(Path(route))
+    except OSError as exc:
+        raise IntentValidationError("route bytes could not be hashed") from exc
+    if actual_digest.lower() != intent.route_sha256.lower():
+        raise IntentValidationError("actual route SHA-256 does not match intent")
+    if not isinstance(observation.route_sha256, str) or actual_digest.lower() != observation.route_sha256.lower():
+        raise IntentValidationError("actual route SHA-256 does not match observation")
+    intent.validate(observation, action_id)
+    return actual_digest
+
+
 @dataclass(frozen=True, slots=True)
 class RunObservation:
     """Facts observed immediately before the irreversible action."""

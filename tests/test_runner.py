@@ -29,6 +29,7 @@ class Provider:
     def prepare(self): self.calls.append("prepare"); return type("R", (), {"ok": True})()
     def start_route(self, route): self.calls.append("route"); return type("R", (), {"ok": True})()
     def stop(self): self.calls.append("stop")
+    def stop_verified(self): self.stop(); return type("R", (), {"ok": True})()
 
 
 def test_mvp_rejects_generic_switcher_without_authorization_before_provider_or_ui(monkeypatch):

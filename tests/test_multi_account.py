@@ -60,6 +60,10 @@ class Provider:
     def stop(self):
         self.calls.append("stop")
 
+    def stop_verified(self):
+        self.stop()
+        return type("R", (), {"ok": True})()
+
 
 # ---------------------------------------------------------------------------
 # run_multi_account (workflow layer)

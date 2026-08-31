@@ -16,6 +16,7 @@ class Provider:
     def __init__(self): self.calls = []
     def start_route(self, route): self.calls.append("start"); raise RuntimeError("route failed")
     def stop(self): self.calls.append("stop")
+    def stop_verified(self): self.stop(); return type("R", (), {"ok": True})()
 
 
 def test_route_cleanup_stops_provider_on_failure():
@@ -28,6 +29,7 @@ class SuccessProvider:
     def __init__(self): self.calls = []
     def start_route(self, route): self.calls.append("start")
     def stop(self): self.calls.append("stop")
+    def stop_verified(self): self.stop(); return type("R", (), {"ok": True})()
 
 
 def test_switch_happens_only_after_successful_route():
