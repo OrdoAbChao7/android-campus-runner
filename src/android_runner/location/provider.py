@@ -83,6 +83,18 @@ class GpsLocatorProvider:
         validate_route(route)
         return self._run(command_for_route(self.commands["route"], route, self.serial))
 
+    def start_route_with_timeout(self, route: Path, *, timeout: float) -> ProviderResult:
+        """Run one route command with the caller's safety duration cap."""
+        if timeout <= 0:
+            return ProviderResult([], 1, "", "route duration deadline has already expired")
+        if self._unsafe_latched:
+            return self._blocked_result("start_route")
+        validate_route(route)
+        return self._run(
+            command_for_route(self.commands["route"], route, self.serial),
+            timeout=timeout,
+        )
+
     def stop(self) -> ProviderResult:
         return self._run(command_for_route(self.commands["stop"], "", self.serial))
 
@@ -125,9 +137,10 @@ class GpsLocatorProvider:
             return self._run(command_for_route(template, "", self.serial))
         return self.last_result
 
-    def _run(self, command: list[str]) -> ProviderResult:
+    def _run(self, command: list[str], *, timeout: float | None = None) -> ProviderResult:
         try:
-            completed = subprocess.run(command, cwd=self.cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=self.timeout, check=False)
+            effective_timeout = self.timeout if timeout is None else min(self.timeout, timeout)
+            completed = subprocess.run(command, cwd=self.cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=effective_timeout, check=False)
             result = ProviderResult(command, completed.returncode, completed.stdout, completed.stderr)
         except (OSError, subprocess.TimeoutExpired) as exc:
             result = ProviderResult(command, 1, "", str(exc))

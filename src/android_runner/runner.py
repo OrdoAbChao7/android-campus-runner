@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Callable
+import time
 
 from .intent import IntentReservation, IntentUseRegistry, RunIntent, RunObservation, validate_route_binding
 from .state import RunState
@@ -127,6 +128,7 @@ def run_mvp(
     intent_registry: IntentUseRegistry | None = None,
     action_id: str = "campus_run.start",
     app_result_verified: Callable[[], bool] | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> MvpRunResult:
     """Execute the authorized MVP flow, stopping safely at the start prompt by default."""
     reservation: IntentReservation | None = None
@@ -175,7 +177,12 @@ def run_mvp(
         except Exception:
             return MvpRunResult(state, state=_cleanup_state(provider))
         account_state = run_route_then_switch(
-            provider, route, switcher, app_result_verified=app_result_verified,
+            provider,
+            route,
+            switcher,
+            app_result_verified=app_result_verified,
+            max_duration=intent.max_duration,
+            clock=clock,
         )
         run_state = RunState.SAFE_STOP if account_state is AccountSwitchState.ABORT else RunState.IDLE
         return MvpRunResult(CampusRunState.RUNNING, account_state, run_state)
@@ -195,6 +202,7 @@ def run_multi_account_mvp(
     intents: dict[str, tuple[RunIntent, RunObservation]] | None = None,
     intent_registry: IntentUseRegistry | None = None,
     app_result_verified_fn: Callable[[str], bool] | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> MultiRunResult:
     """Run campus-run sequentially for every account in *accounts*.
 
@@ -274,6 +282,7 @@ def run_multi_account_mvp(
             intent_registry=intent_registry,
             reservation=reservation,
             app_result_verified_fn=app_result_verified_fn,
+            clock=clock,
         )
     finally:
         intent_registry.release_reservation(reservation)

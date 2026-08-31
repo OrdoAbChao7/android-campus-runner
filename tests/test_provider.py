@@ -33,6 +33,25 @@ def test_prepare_launches_provider_app_when_configured():
     assert calls == [["prep"], ["launch", "PHONE"]]
 
 
+def test_start_route_with_timeout_passes_the_authorized_duration_to_the_provider(tmp_path):
+    route = tmp_path / "route.gpx"
+    route.write_text(
+        '<gpx><trk><trkseg><trkpt lat="1" lon="2"/><trkpt lat="3" lon="4"/></trkseg></trk></gpx>',
+        encoding="utf-8",
+    )
+    provider = GpsLocatorProvider({"route": ["gps", "route", "{route}"]})
+    calls = []
+
+    def run(command, *, timeout=None):
+        calls.append((command, timeout))
+        return ProviderResult(command, 0, "", "")
+
+    provider._run = run
+
+    assert provider.start_route_with_timeout(route, timeout=12.5).ok is True
+    assert calls == [(["gps", "route", str(route)], 12.5)]
+
+
 def test_stop_verified_waits_for_inactive_simulation():
     provider = GpsLocatorProvider({"stop": ["gps", "stop"], "status": ["gps", "status"]}, poll_interval=0)
     responses = iter([

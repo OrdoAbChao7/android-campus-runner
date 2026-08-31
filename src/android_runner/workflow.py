@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from collections.abc import Callable
 from typing import Protocol
@@ -21,6 +23,16 @@ class RouteProvider(Protocol):
     def start_route(self, route: Path): ...
     def stop(self): ...
     def stop_verified(self): ...
+
+
+def _start_route_with_deadline(provider: RouteProvider, route: Path, remaining_seconds: float):
+    """Use a provider-native timeout when available, otherwise run normally."""
+    if remaining_seconds <= 0:
+        return None
+    bounded_start = getattr(provider, "start_route_with_timeout", None)
+    if callable(bounded_start):
+        return bounded_start(route, timeout=remaining_seconds)
+    return provider.start_route(route)
 
 
 @dataclass
@@ -50,11 +62,29 @@ def stop_provider_verified(provider: RouteProvider) -> bool:
     return bool(getattr(result, "ok", False))
 
 
-def run_route_with_cleanup(provider: RouteProvider, route: Path) -> bool:
+def run_route_with_cleanup(
+    provider: RouteProvider,
+    route: Path,
+    *,
+    max_duration: timedelta | None = None,
+    clock: Callable[[], float] = time.monotonic,
+) -> bool:
+    """Run one route and always verify shutdown within its allowed duration."""
     route_ok = False
+    route_started_at = clock()
     try:
-        result = provider.start_route(route)
+        if max_duration is None:
+            result = provider.start_route(route)
+        else:
+            result = _start_route_with_deadline(
+                provider,
+                route,
+                max_duration.total_seconds(),
+            )
         route_ok = bool(getattr(result, "ok", True))
+        if max_duration is not None and clock() - route_started_at > max_duration.total_seconds():
+            log.error("route duration exceeded the authorized maximum")
+            route_ok = False
     except Exception:
         log.warning("route failed", exc_info=True)
     stopped = stop_provider_verified(provider)
@@ -67,11 +97,18 @@ def run_route_then_switch(
     switcher,
     *,
     app_result_verified: Callable[[], bool] | None = None,
+    max_duration: timedelta | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> AccountSwitchState:
     """Switch only after independent app-result proof and verified provider shutdown."""
     if not isinstance(switcher, WeComEnterpriseSwitcher):
         return AccountSwitchState.ABORT
-    if not run_route_with_cleanup(provider, route):
+    if not run_route_with_cleanup(
+        provider,
+        route,
+        max_duration=max_duration,
+        clock=clock,
+    ):
         return AccountSwitchState.ABORT
     if app_result_verified is None:
         return AccountSwitchState.ABORT
@@ -135,6 +172,7 @@ def _run_multi_account_for_test(
     reservation: IntentReservation | None = None,
     action_id: str = "campus_run.start",
     app_result_verified_fn: Callable[[str], bool] | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> MultiRunResult:
     """Run each account only after consuming its registered start authorization."""
     if not accounts:
@@ -185,12 +223,24 @@ def _run_multi_account_for_test(
                 result.failed.append(account)
                 break
 
+            route_started_at = clock()
+            route_timed_out = False
             try:
-                route_result = provider.start_route(route)
+                route_result = _start_route_with_deadline(
+                    provider,
+                    route,
+                    intent.max_duration.total_seconds(),
+                )
                 ok = bool(getattr(route_result, "ok", True))
+                route_timed_out = clock() - route_started_at > intent.max_duration.total_seconds()
             except Exception:
                 log.warning("route failed", exc_info=True)
                 ok = False
+            if route_timed_out:
+                log.error("route duration exceeded for account: %s", account)
+                result.failed.append(account)
+                result.state = RunState.SAFE_STOP
+                break
             if not ok:
                 log.error("route failed for account: %s", account)
                 result.failed.append(account)
@@ -255,6 +305,7 @@ def run_multi_account(
     reservation: IntentReservation | None = None,
     action_id: str = "campus_run.start",
     app_result_verified_fn: Callable[[str], bool] | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> MultiRunResult:
     """Production multi-account flow using only a guarded WeCom capability."""
     if not isinstance(switcher_capability, WeComEnterpriseSwitchCapability):
@@ -276,4 +327,5 @@ def run_multi_account(
         reservation=reservation,
         action_id=action_id,
         app_result_verified_fn=app_result_verified_fn,
+        clock=clock,
     )
