@@ -11,13 +11,16 @@ the directory that contains this file's parent):
 
     python dashboard/app.py
 
-The server listens on http://0.0.0.0:5050 by default.
+The server listens on http://127.0.0.1:5050 by default.
 """
 from __future__ import annotations
 
+import hmac
 import json
 import logging
+import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -46,6 +49,8 @@ from android_runner.accounts import Account, load_accounts, ordered_enterprises 
 from android_runner.cli import DEFAULT_ADB, load_provider_config  # noqa: E402
 from android_runner.device import AndroidDevice  # noqa: E402
 from android_runner.location.provider import GpsLocatorProvider  # noqa: E402
+from android_runner.location.route import RouteError, validate_route  # noqa: E402
+from android_runner.intent import IntentUseRegistry, IntentValidationError, RunIntent, RunObservation  # noqa: E402
 from android_runner.runner import run_multi_account_mvp  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -53,24 +58,6 @@ from android_runner.runner import run_multi_account_mvp  # noqa: E402
 # ---------------------------------------------------------------------------
 
 app = Flask(__name__)
-
-# ---------------------------------------------------------------------------
-# CORS — allow every origin (local dev tool, no auth needed)
-# ---------------------------------------------------------------------------
-
-@app.after_request
-def _add_cors_headers(response: Response) -> Response:
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-    return response
-
-
-@app.route("/", defaults={"path": ""}, methods=["OPTIONS"])
-@app.route("/<path:path>", methods=["OPTIONS"])
-def _options_handler(path: str) -> Response:
-    return Response(status=204)
-
 
 # ---------------------------------------------------------------------------
 # Shared run-state
@@ -170,6 +157,28 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+CONTROL_TOKEN_ENV = "ANDROID_RUNNER_DASHBOARD_TOKEN"
+
+
+def _require_control_token() -> tuple[dict, int] | None:
+    """Fail closed unless a local control token authorizes a write request."""
+    expected = os.environ.get(CONTROL_TOKEN_ENV, "")
+    if not expected:
+        return _err("dashboard control token is not configured", 503)
+
+    provided = request.headers.get("X-Local-Control-Token", "")
+    if not provided:
+        authorization = request.headers.get("Authorization", "")
+        if authorization.startswith("Bearer "):
+            provided = authorization.removeprefix("Bearer ")
+
+    # Deliberately compare even an empty candidate once a token is configured.
+    matches = hmac.compare_digest(provided, expected)
+    if not provided or not matches:
+        return _err("a valid local control token is required", 401)
+    return None
+
+
 # ---------------------------------------------------------------------------
 # File helpers
 # ---------------------------------------------------------------------------
@@ -180,11 +189,8 @@ DASHBOARD_CONFIG_PATH = BASE_DIR / "config" / "dashboard.yaml"
 ROUTES_DIR = BASE_DIR / "routes"
 
 _DEFAULT_DASHBOARD_CONFIG: dict = {
-    "gps_config": str(GPS_CONFIG_PATH),
     "route": "",
     "serial": "",
-    "adb": DEFAULT_ADB,
-    "accounts_file": str(ACCOUNTS_PATH),
 }
 
 
@@ -193,20 +199,111 @@ def _load_dashboard_config() -> dict:
         return dict(_DEFAULT_DASHBOARD_CONFIG)
     raw = yaml.safe_load(DASHBOARD_CONFIG_PATH.read_text(encoding="utf-8")) or {}
     cfg = dict(_DEFAULT_DASHBOARD_CONFIG)
-    cfg.update({key: value for key, value in raw.items() if key in cfg})
+    if not isinstance(raw, dict):
+        return cfg
+    route_name = raw.get("route", "")
+    if isinstance(route_name, str) and route_name:
+        try:
+            cfg["route"] = _resolve_route(route_name).name
+        except ValueError:
+            pass
+    serial = raw.get("serial", "")
+    if isinstance(serial, str) and _is_valid_serial(serial):
+        cfg["serial"] = serial
     return cfg
 
 
 def _save_dashboard_config(cfg: dict) -> None:
     DASHBOARD_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     DASHBOARD_CONFIG_PATH.write_text(
-        yaml.dump(cfg, allow_unicode=True, sort_keys=False),
+        yaml.dump({"route": cfg["route"], "serial": cfg["serial"]}, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
     )
 
 
 def _accounts_to_yaml_dict(accounts: list[dict]) -> dict:
     return {"accounts": accounts}
+
+
+_SERIAL_RE = re.compile(r"[A-Za-z0-9._:-]{1,128}")
+_ENTERPRISE_RE = re.compile(r"[\w .&()（）-]{1,80}", re.UNICODE)
+_PHONE_RE = re.compile(r"\+?[0-9][0-9 -]{4,31}")
+_CREDENTIAL_REF_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}")
+
+
+def _is_valid_serial(value: str) -> bool:
+    return value == "" or bool(_SERIAL_RE.fullmatch(value))
+
+
+def _resolve_route(route_name: object) -> Path:
+    """Resolve one validated route basename below ``ROUTES_DIR`` only."""
+    if not isinstance(route_name, str) or not route_name or len(route_name) > 128:
+        raise ValueError("route must be a non-empty filename")
+    if "/" in route_name or "\\" in route_name or Path(route_name).name != route_name:
+        raise ValueError("route must be a basename")
+    if Path(route_name).suffix.lower() not in {".gpx", ".kml"}:
+        raise ValueError("route must be a GPX or KML file")
+
+    routes_root = ROUTES_DIR.resolve()
+    candidate = (routes_root / route_name).resolve()
+    if candidate.parent != routes_root:
+        raise ValueError("route is outside the configured routes directory")
+    if not candidate.is_file():
+        raise ValueError("route does not exist")
+    try:
+        validate_route(candidate)
+    except (RouteError, ValueError, OSError) as exc:
+        raise ValueError("route is invalid") from exc
+    return candidate
+
+
+def _validated_account(entry: object) -> dict:
+    """Return a storage-safe account record or raise ``ValueError``."""
+    if not isinstance(entry, dict):
+        raise ValueError("each account must be an object")
+    if "password" in entry or "passwd" in entry:
+        raise ValueError("plaintext credential fields are not accepted; use credential_ref")
+
+    enterprise = entry.get("enterprise")
+    phone = entry.get("phone")
+    credential_ref = entry.get("credential_ref")
+    if not isinstance(enterprise, str) or not _ENTERPRISE_RE.fullmatch(enterprise.strip()):
+        raise ValueError("enterprise contains unsupported characters")
+    if not isinstance(phone, str) or not _PHONE_RE.fullmatch(phone.strip()):
+        raise ValueError("phone contains unsupported characters")
+    if credential_ref is not None:
+        if not isinstance(credential_ref, str) or not _CREDENTIAL_REF_RE.fullmatch(credential_ref.strip()):
+            raise ValueError("credential_ref contains unsupported characters")
+        credential_ref = credential_ref.strip()
+
+    return {
+        "enterprise": enterprise.strip(),
+        "phone": phone.strip(),
+        "credential_ref": credential_ref,
+        "current": bool(entry.get("current", False)),
+    }
+
+
+def _validate_run_intents(
+    enterprises: list[str],
+    intents: object,
+    intent_registry: object,
+) -> dict[str, tuple[RunIntent, RunObservation]]:
+    """Reject before adapters are constructed unless every account is authorized."""
+    if not isinstance(intent_registry, IntentUseRegistry) or not isinstance(intents, dict):
+        raise IntentValidationError("valid per-account RunIntent authorization is required")
+
+    validated: dict[str, tuple[RunIntent, RunObservation]] = {}
+    for enterprise in enterprises:
+        binding = intents.get(enterprise)
+        if not isinstance(binding, tuple) or len(binding) != 2:
+            raise IntentValidationError("valid per-account RunIntent authorization is required")
+        intent, observation = binding
+        if not isinstance(intent, RunIntent) or not isinstance(observation, RunObservation):
+            raise IntentValidationError("valid per-account RunIntent authorization is required")
+        intent_registry.validate_registered(intent)
+        validated[enterprise] = (intent, observation)
+    return validated
 
 
 # ---------------------------------------------------------------------------
@@ -216,21 +313,31 @@ def _accounts_to_yaml_dict(accounts: list[dict]) -> dict:
 def _run_task(
     *,
     serial: str,
-    adb: str,
-    gps_config_path: str,
     route: str,
-    accounts_file: str,
+    intents: object,
+    intent_registry: object,
 ) -> None:
     """Target function for the background campus-run thread.
 
     Updates *_state* throughout and broadcasts SSE events.
     """
-    global _sse_handler
+    log = logging.getLogger("android_runner.dashboard")
 
+    # This check intentionally precedes construction of provider/device
+    # adapters. A missing or unregistered RunIntent cannot reach subprocesses
+    # or device UI, even through a future caller of this internal function.
+    try:
+        route_path = _resolve_route(route)
+        loaded_accounts = load_accounts(ACCOUNTS_PATH)
+        enterprise_list = ordered_enterprises(loaded_accounts)
+        validated_intents = _validate_run_intents(enterprise_list, intents, intent_registry)
+    except (Exception,) as exc:
+        log.info("refusing dashboard run before provider/UI work: %s", exc)
+        return
+
+    global _sse_handler
     handler = _attach_log_handler()
     _sse_handler = handler
-
-    log = logging.getLogger("android_runner.dashboard")
 
     try:
         with _state_lock:
@@ -247,7 +354,7 @@ def _run_task(
 
         # --- Load provider config ---
         try:
-            config = load_provider_config(gps_config_path)
+            config = load_provider_config(GPS_CONFIG_PATH)
         except Exception as exc:
             log.error("failed to load GPS provider config: %s", exc)
             with _state_lock:
@@ -263,24 +370,14 @@ def _run_task(
 
         # --- Connect to device ---
         try:
-            device = AndroidDevice(adb, effective_serial)
+            device = AndroidDevice(DEFAULT_ADB, effective_serial)
         except Exception as exc:
             log.error("failed to connect to device: %s", exc)
             with _state_lock:
                 _state.failed = ["(device)"]
             return
 
-        # --- Load accounts ---
-        try:
-            loaded_accounts = load_accounts(accounts_file)
-        except Exception as exc:
-            log.error("failed to load accounts: %s", exc)
-            with _state_lock:
-                _state.failed = ["(accounts)"]
-            return
-
         current_account = next((a.enterprise for a in loaded_accounts if a.current), None)
-        enterprise_list = ordered_enterprises(loaded_accounts)
 
         log.info(
             "starting campus-run for %d account(s): %s",
@@ -322,9 +419,11 @@ def _run_task(
                 sub_result = run_multi_account_mvp(
                     device=device,
                     provider=provider,
-                    route=Path(route),
+                    route=route_path,
                     accounts=[enterprise],
                     current_account=sub_current,
+                    intents={enterprise: validated_intents[enterprise]},
+                    intent_registry=intent_registry,
                 )
             except Exception as exc:
                 log.error("unexpected error for account %s: %s", enterprise, exc, exc_info=True)
@@ -408,6 +507,9 @@ def post_accounts() -> Response:
     Only credential references are accepted. Secret values must remain in an
     external credential store and are never written by this endpoint.
     """
+    denied = _require_control_token()
+    if denied is not None:
+        return denied
     body = request.get_json(silent=True)
     if not body or not isinstance(body.get("accounts"), list):
         return _err("request body must contain an 'accounts' list")
@@ -415,27 +517,17 @@ def post_accounts() -> Response:
     incoming: list[dict] = body["accounts"]
 
     merged: list[dict] = []
+    enterprises: set[str] = set()
     for entry in incoming:
-        if not isinstance(entry, dict):
-            return _err("each account must be an object")
-        if "password" in entry or "passwd" in entry:
-            return _err("plaintext credential fields are not accepted; use credential_ref")
-        enterprise = str(entry.get("enterprise", "")).strip()
-        phone = str(entry.get("phone", "")).strip()
-        credential_ref = entry.get("credential_ref")
-        if credential_ref is not None:
-            credential_ref = str(credential_ref).strip()
-        current = bool(entry.get("current", False))
-
-        if not enterprise or not phone:
-            return _err("each account must have 'enterprise' and 'phone'")
-
-        merged.append({
-            "enterprise": enterprise,
-            "phone": phone,
-            "credential_ref": credential_ref,
-            "current": current,
-        })
+        try:
+            account = _validated_account(entry)
+        except ValueError as exc:
+            return _err(str(exc))
+        enterprise_key = account["enterprise"].casefold()
+        if enterprise_key in enterprises:
+            return _err("duplicate enterprise")
+        enterprises.add(enterprise_key)
+        merged.append(account)
 
     try:
         ACCOUNTS_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -466,16 +558,31 @@ def get_config() -> Response:
 @app.route("/api/config", methods=["POST"])
 def post_config() -> Response:
     """Persist dashboard run configuration to config/dashboard.yaml."""
+    denied = _require_control_token()
+    if denied is not None:
+        return denied
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
         return _err("request body must be a JSON object")
 
-    # Only allow known keys to avoid arbitrary data in the file.
-    allowed = {"gps_config", "route", "serial", "adb", "accounts_file"}
+    # Provider commands, working directory, ADB executable, and account file
+    # are deployment-time adapters. This endpoint may only select a route by
+    # basename and a device serial; it cannot configure executable behavior.
+    forbidden = {"gps_config", "adb", "accounts_file", "commands", "command", "working_directory"}
+    if forbidden.intersection(body):
+        return _err("provider and executable configuration is not accepted")
+
     cfg = _load_dashboard_config()
-    for key in allowed:
-        if key in body:
-            cfg[key] = body[key]
+    if "route" in body:
+        try:
+            cfg["route"] = _resolve_route(body["route"]).name
+        except ValueError as exc:
+            return _err(str(exc))
+    if "serial" in body:
+        serial = body["serial"]
+        if not isinstance(serial, str) or not _is_valid_serial(serial):
+            return _err("serial contains unsupported characters")
+        cfg["serial"] = serial
 
     try:
         _save_dashboard_config(cfg)
@@ -509,6 +616,9 @@ def get_routes() -> Response:
 @app.route("/api/run/start", methods=["POST"])
 def run_start() -> Response:
     """Refuse execution until a future safe external RunIntent bridge exists."""
+    denied = _require_control_token()
+    if denied is not None:
+        return denied
     with _state_lock:
         if _state.running:
             return _err("a run is already in progress", 409)
@@ -519,6 +629,9 @@ def run_start() -> Response:
 @app.route("/api/run/stop", methods=["POST"])
 def run_stop() -> Response:
     """Request a graceful stop after the current account's run finishes."""
+    denied = _require_control_token()
+    if denied is not None:
+        return denied
     with _state_lock:
         if not _state.running:
             return _err("no run is currently in progress", 409)
@@ -623,4 +736,4 @@ if __name__ == "__main__":
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    app.run(host="0.0.0.0", port=5050, debug=False, threaded=True)
+    app.run(host="127.0.0.1", port=5050, debug=False, threaded=True)
