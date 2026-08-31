@@ -175,6 +175,7 @@ def _run_multi_account_for_test(
                     "intent": intent,
                     "observation": observation,
                     "intent_registry": intent_registry,
+                    "route": route,
                     "action_id": action_id,
                 }
                 confirm_kwargs["reservation"] = reservation

@@ -7,12 +7,13 @@ from android_runner.device import WeComCheckpoint, WeComPage, classify_wecom_pag
 from android_runner.wecom.account import AccountSwitchState, AccountSwitcher, WeComEnterpriseSwitcher
 
 
-def _checkpoint(page: WeComPage, fingerprint: str) -> WeComCheckpoint:
+def _checkpoint(page: WeComPage, fingerprint: str, enterprise: str = "当前企业") -> WeComCheckpoint:
     return WeComCheckpoint(
         screenshot_path=Path("screen.png"), hierarchy_path=Path("page.xml"),
         captured_at=datetime.now(timezone.utc), foreground_package="com.tencent.wework",
         foreground_activity="com.tencent.wework.launch.WwMainActivity", adb_serial="PHONE",
         device_fingerprint="fingerprint", page_fingerprint=fingerprint, page=page,
+        enterprise_identity=enterprise,
     )
 
 
@@ -30,7 +31,7 @@ def test_enterprise_switcher_only_selects_distinct_explicitly_logged_in_enterpri
             self.checkpoints = iter((
                 _checkpoint(WeComPage.ACCOUNT_HOME, "a" * 64),
                 _checkpoint(WeComPage.ACCOUNT_SWITCHER, "b" * 64),
-                _checkpoint(WeComPage.ACCOUNT_HOME, "c" * 64),
+                _checkpoint(WeComPage.ACCOUNT_HOME, "c" * 64, "目标企业"),
             ))
 
         def capture_wecom_checkpoint(self, _directory):

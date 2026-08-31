@@ -20,7 +20,7 @@ class Device:
             captured_at=datetime.now(timezone.utc), foreground_package="com.tencent.wework",
             foreground_activity="com.tencent.wework.launch.WwMainActivity", adb_serial="PHONE",
             device_fingerprint="fingerprint", page_fingerprint="a" * 64,
-            page=WeComPage.START_PROMPT,
+            page=WeComPage.START_PROMPT, enterprise_identity="target",
         )
 
 

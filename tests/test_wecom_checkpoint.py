@@ -24,7 +24,9 @@ def test_checkpoint_captures_wecom_start_prompt_evidence_and_stable_fingerprint(
 
         def dump_hierarchy(self):
             return (
-                '<hierarchy><node class="android.widget.TextView" text="自由跑" '
+                '<hierarchy><node class="android.widget.TextView" text="企业A" '
+                'resource-id="com.tencent.wework:id/enterprise_name" />'
+                '<node class="android.widget.TextView" text="自由跑" '
                 'resource-id="com.tencent.wework:id/campus_run_free_run" /></hierarchy>'
             )
 
@@ -46,6 +48,7 @@ def test_checkpoint_captures_wecom_start_prompt_evidence_and_stable_fingerprint(
     assert checkpoint.device_fingerprint == "vendor/device/build:fingerprint"
     assert checkpoint.page is WeComPage.START_PROMPT
     assert len(checkpoint.page_fingerprint) == 64
+    assert checkpoint.enterprise_identity == "企业A"
 
 
 @pytest.mark.parametrize(

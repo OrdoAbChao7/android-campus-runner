@@ -158,13 +158,17 @@ def run_mvp(
         if reservation is None:
             return MvpRunResult(state, state=_cleanup_state(provider))
         try:
-            start_checkpoint = capture_start_prompt_checkpoint(device)
+            start_checkpoint = capture_start_prompt_checkpoint(
+                device,
+                expected_enterprise=intent.target_enterprise,
+            )
             confirm_free_run(
                 device,
                 intent=intent,
                 observation=observation,
                 intent_registry=intent_registry,
                 reservation=reservation,
+                route=route,
                 action_id=action_id,
                 start_checkpoint=start_checkpoint,
             )
@@ -248,9 +252,13 @@ def run_multi_account_mvp(
         )
 
         def confirm_with_checkpoint(_device, **kwargs):
+            intent = kwargs["intent"]
             return confirm_free_run(
                 _device,
-                start_checkpoint=capture_start_prompt_checkpoint(_device),
+                start_checkpoint=capture_start_prompt_checkpoint(
+                    _device,
+                    expected_enterprise=intent.target_enterprise,
+                ),
                 **kwargs,
             )
 

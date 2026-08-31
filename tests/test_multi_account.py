@@ -40,7 +40,7 @@ class Device:
             captured_at=datetime.now(timezone.utc), foreground_package="com.tencent.wework",
             foreground_activity="com.tencent.wework.launch.WwMainActivity", adb_serial="PHONE",
             device_fingerprint="fingerprint", page_fingerprint="a" * 64,
-            page=WeComPage.START_PROMPT,
+            page=WeComPage.START_PROMPT, enterprise_identity="企业A",
         )
 
 
@@ -566,6 +566,17 @@ def test_mvp_multi_account_full_flow(monkeypatch, tmp_path):
     """Integration: two accounts complete successfully via run_multi_account_mvp."""
     monkeypatch.setattr(runner, "open_campus_run", lambda device: CampusRunState.START_PROMPT)
     monkeypatch.setattr(runner, "confirm_free_run", lambda device, **kwargs: CampusRunState.RUNNING)
+    monkeypatch.setattr(
+        runner,
+        "capture_start_prompt_checkpoint",
+        lambda _device, *, expected_enterprise: WeComCheckpoint(
+            screenshot_path=Path("screen.png"), hierarchy_path=Path("page.xml"),
+            captured_at=datetime.now(timezone.utc), foreground_package="com.tencent.wework",
+            foreground_activity="com.tencent.wework.launch.WwMainActivity", adb_serial="PHONE",
+            device_fingerprint="fingerprint", page_fingerprint="a" * 64,
+            page=WeComPage.START_PROMPT, enterprise_identity=expected_enterprise,
+        ),
+    )
 
     switched_to: list[str] = []
 

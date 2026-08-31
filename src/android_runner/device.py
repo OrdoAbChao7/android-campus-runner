@@ -38,6 +38,7 @@ class WeComCheckpoint:
     device_fingerprint: str
     page_fingerprint: str
     page: WeComPage
+    enterprise_identity: str | None = None
 
     def __post_init__(self) -> None:
         if self.captured_at.tzinfo is None or self.captured_at.utcoffset() is None:
@@ -52,10 +53,21 @@ class WeComCheckpoint:
             raise UnsafeWeComCheckpoint("checkpoint device identity is incomplete")
         if len(self.page_fingerprint) != 64 or any(char not in "0123456789abcdef" for char in self.page_fingerprint):
             raise UnsafeWeComCheckpoint("checkpoint page fingerprint is invalid")
+        if self.enterprise_identity is not None and not self.enterprise_identity.strip():
+            raise UnsafeWeComCheckpoint("checkpoint enterprise identity is invalid")
 
     def require_page(self, page: WeComPage) -> None:
         if self.page is not page:
             raise UnsafeWeComCheckpoint(f"expected {page.value}, found {self.page.value}")
+
+    def require_enterprise(self, enterprise: str) -> None:
+        """Require a captured enterprise identity to match the protected target."""
+        expected = enterprise.strip() if isinstance(enterprise, str) else ""
+        actual = self.enterprise_identity.strip() if isinstance(self.enterprise_identity, str) else ""
+        if not expected or not actual:
+            raise UnsafeWeComCheckpoint("checkpoint enterprise identity is incomplete")
+        if actual.casefold() != expected.casefold():
+            raise UnsafeWeComCheckpoint("checkpoint enterprise identity does not match expected enterprise")
 
 
 _UNSAFE_PAGE_MARKERS = (
@@ -82,9 +94,16 @@ _SAFE_PAGE_SIGNATURES = {
         "com.tencent.wework:id/enterprise_switcher",
     ),
 }
+_ENTERPRISE_ID_RESOURCE_IDS = frozenset({
+    "com.tencent.wework:id/enterprise_name",
+    "com.tencent.wework:id/enterprise_name_text",
+    "com.tencent.wework:id/enterprise_name_tv",
+    "com.tencent.wework:id/corp_name",
+    "com.tencent.wework:id/org_name",
+})
 
 
-def _hierarchy_metadata(hierarchy: str) -> tuple[str, frozenset[str], frozenset[str]]:
+def _hierarchy_metadata(hierarchy: str) -> tuple[str, frozenset[str], frozenset[str], str | None]:
     """Extract only stable UI data used by the narrow page allowlist."""
     try:
         root = ET.fromstring(hierarchy)
@@ -93,6 +112,7 @@ def _hierarchy_metadata(hierarchy: str) -> tuple[str, frozenset[str], frozenset[
     nodes = []
     texts: set[str] = set()
     resource_ids: set[str] = set()
+    enterprise_identities: set[str] = set()
     for node in root.iter():
         attributes = tuple(
             (name, node.attrib.get(name, ""))
@@ -107,10 +127,20 @@ def _hierarchy_metadata(hierarchy: str) -> tuple[str, frozenset[str], frozenset[
             texts.add(text)
         if resource_id:
             resource_ids.add(resource_id)
+            if resource_id in _ENTERPRISE_ID_RESOURCE_IDS and text.strip():
+                enterprise_identities.add(text.strip())
     if not nodes:
         raise UnsafeWeComCheckpoint("UI hierarchy has no semantic nodes")
     canonical = repr(tuple(nodes)).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest(), frozenset(texts), frozenset(resource_ids)
+    if len(enterprise_identities) > 1:
+        raise UnsafeWeComCheckpoint("checkpoint enterprise identity is ambiguous")
+    enterprise_identity = next(iter(enterprise_identities), None)
+    return (
+        hashlib.sha256(canonical).hexdigest(),
+        frozenset(texts),
+        frozenset(resource_ids),
+        enterprise_identity,
+    )
 
 
 def classify_wecom_page(*, package: str, activity: str, hierarchy: str) -> tuple[WeComPage, str]:
@@ -119,7 +149,7 @@ def classify_wecom_page(*, package: str, activity: str, hierarchy: str) -> tuple
         raise UnsafeWeComCheckpoint("foreground package is not WeCom")
     if activity not in _KNOWN_WECOM_ACTIVITIES:
         raise UnsafeWeComCheckpoint("foreground activity is not recognized as WeCom")
-    fingerprint, texts, resource_ids = _hierarchy_metadata(hierarchy)
+    fingerprint, texts, resource_ids, _enterprise_identity = _hierarchy_metadata(hierarchy)
     normalized = hierarchy.casefold()
     if any(marker in normalized for marker in _UNSAFE_PAGE_MARKERS):
         raise UnsafeWeComCheckpoint("authentication or re-authentication screen is unsafe")
@@ -181,6 +211,9 @@ class AndroidDevice:
             activity=activity,
             hierarchy=hierarchy,
         )
+        _, _, _, enterprise_identity = _hierarchy_metadata(hierarchy)
+        if enterprise_identity is None:
+            raise UnsafeWeComCheckpoint("checkpoint enterprise identity is unavailable")
         device_fingerprint = self.adb.shell("getprop", "ro.build.fingerprint")
         return WeComCheckpoint(
             screenshot_path=screenshot_path,
@@ -192,6 +225,7 @@ class AndroidDevice:
             device_fingerprint=device_fingerprint,
             page_fingerprint=fingerprint,
             page=page,
+            enterprise_identity=enterprise_identity,
         )
 
     def wait_text(self, text: str, timeout: float = 10.0) -> bool:

@@ -44,12 +44,13 @@ def test_switch_happens_only_after_successful_route():
 def test_switch_requires_explicit_verified_app_result_after_verified_provider_stop():
     provider = SuccessProvider()
 
-    def checkpoint(page, fingerprint):
+    def checkpoint(page, fingerprint, enterprise="当前企业"):
         return WeComCheckpoint(
             screenshot_path=Path("screen.png"), hierarchy_path=Path("page.xml"),
             captured_at=datetime.now(timezone.utc), foreground_package="com.tencent.wework",
             foreground_activity="com.tencent.wework.launch.WwMainActivity", adb_serial="PHONE",
             device_fingerprint="fingerprint", page_fingerprint=fingerprint, page=page,
+            enterprise_identity=enterprise,
         )
 
     class Device:
@@ -58,7 +59,7 @@ def test_switch_requires_explicit_verified_app_result_after_verified_provider_st
             self.checkpoints = iter((
                 checkpoint(WeComPage.ACCOUNT_HOME, "a" * 64),
                 checkpoint(WeComPage.ACCOUNT_SWITCHER, "b" * 64),
-                checkpoint(WeComPage.ACCOUNT_HOME, "c" * 64),
+                checkpoint(WeComPage.ACCOUNT_HOME, "c" * 64, "目标企业"),
             ))
 
         def capture_wecom_checkpoint(self, _directory): return next(self.checkpoints)

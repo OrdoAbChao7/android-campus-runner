@@ -70,7 +70,11 @@ class WeComEnterpriseSwitcher(AccountSwitcher):
             return self.state
         return super().switch()
 
-    def _checkpoint(self, expected_page: WeComPage) -> WeComCheckpoint:
+    def _checkpoint(
+        self,
+        expected_page: WeComPage,
+        expected_enterprise: str,
+    ) -> WeComCheckpoint:
         capture = getattr(self.device, "capture_wecom_checkpoint", None)
         if not callable(capture):
             raise UnsafeWeComCheckpoint("device does not support WeCom checkpoints")
@@ -78,19 +82,43 @@ class WeComEnterpriseSwitcher(AccountSwitcher):
         if not isinstance(checkpoint, WeComCheckpoint):
             raise UnsafeWeComCheckpoint("invalid WeCom checkpoint")
         checkpoint.require_page(expected_page)
+        checkpoint.require_enterprise(expected_enterprise)
         return checkpoint
 
     def _open(self) -> None:
-        self._checkpoint(WeComPage.ACCOUNT_HOME)
+        self._checkpoint(WeComPage.ACCOUNT_HOME, self.current or "")
         self.device.click(resource_id="com.tencent.wework:id/nts")
 
     def _select(self) -> None:
-        self._checkpoint(WeComPage.ACCOUNT_SWITCHER)
+        self._checkpoint(WeComPage.ACCOUNT_SWITCHER, self.current or "")
         self.device.click(text=self.target)
 
     def _verify(self) -> bool:
-        self._checkpoint(WeComPage.ACCOUNT_HOME)
-        return self.device.wait_text(self.target, timeout=5)
+        if not self.device.wait_text(self.target, timeout=5):
+            return False
+        self._checkpoint(WeComPage.ACCOUNT_HOME, self.target)
+        return True
+
+    def verify_active(self) -> AccountSwitchState:
+        """Verify the current enterprise without tapping the switch control."""
+        if (
+            not self.target
+            or not self.current
+            or self.target != self.current
+            or self.target not in self.logged_in_enterprises
+        ):
+            self.state = AccountSwitchState.ABORT
+            return self.state
+        try:
+            self.state = AccountSwitchState.VERIFY_ACCOUNT
+            if not self.device.wait_text(self.target, timeout=5):
+                self.state = AccountSwitchState.ABORT
+                return self.state
+            self._checkpoint(WeComPage.ACCOUNT_HOME, self.target)
+            self.state = AccountSwitchState.READY
+        except Exception:
+            self.state = AccountSwitchState.ABORT
+        return self.state
 
 
 class WeComEnterpriseSwitchCapability:
@@ -115,6 +143,23 @@ class WeComEnterpriseSwitchCapability:
             logged_in_enterprises=self.logged_in_enterprises,
         )
         if switcher.switch() is not AccountSwitchState.READY:
+            return False
+        self.current = target
+        return True
+
+    def ensure_active(self, target: str) -> bool:
+        """Protected switch or identity verification before every account run."""
+        switcher = WeComEnterpriseSwitcher(
+            self.device,
+            target=target,
+            current=self.current,
+            logged_in_enterprises=self.logged_in_enterprises,
+        )
+        if target == self.current:
+            state = switcher.verify_active()
+        else:
+            state = switcher.switch()
+        if state is not AccountSwitchState.READY:
             return False
         self.current = target
         return True

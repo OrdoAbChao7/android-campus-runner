@@ -4,7 +4,14 @@ from enum import Enum, auto
 from pathlib import Path
 
 from ..device import AndroidDevice, UnsafeWeComCheckpoint, WeComCheckpoint, WeComPage
-from ..intent import IntentReservation, IntentUseRegistry, IntentValidationError, RunIntent, RunObservation
+from ..intent import (
+    IntentReservation,
+    IntentUseRegistry,
+    IntentValidationError,
+    RunIntent,
+    RunObservation,
+    validate_route_binding,
+)
 
 
 class CampusRunState(Enum):
@@ -42,6 +49,8 @@ def open_campus_run(device: AndroidDevice, timeout: float = 15.0) -> CampusRunSt
 def capture_start_prompt_checkpoint(
     device: AndroidDevice,
     directory: Path = Path("logs/checkpoints"),
+    *,
+    expected_enterprise: str | None = None,
 ) -> WeComCheckpoint:
     """Capture the manual start boundary; no authorization is consumed here."""
     capture = getattr(device, "capture_wecom_checkpoint", None)
@@ -51,6 +60,8 @@ def capture_start_prompt_checkpoint(
     if not isinstance(checkpoint, WeComCheckpoint):
         raise UnsafeWeComCheckpoint("invalid WeCom checkpoint")
     checkpoint.require_page(WeComPage.START_PROMPT)
+    if expected_enterprise is not None:
+        checkpoint.require_enterprise(expected_enterprise)
     return checkpoint
 
 
@@ -61,6 +72,7 @@ def confirm_free_run(
     observation: RunObservation,
     intent_registry: IntentUseRegistry,
     reservation: IntentReservation,
+    route: Path,
     start_checkpoint: WeComCheckpoint | None = None,
     action_id: str = "campus_run.start",
     timeout: float = 10.0,
@@ -71,6 +83,7 @@ def confirm_free_run(
     if not isinstance(reservation, IntentReservation):
         raise IntentValidationError("IntentReservation is required")
     _verify_start_prompt_checkpoint(device, start_checkpoint, intent)
+    validate_route_binding(route, intent, observation, action_id)
     intent_registry.consume_reserved(reservation, intent, observation, action_id)
     device.click(text="自由跑", timeout=timeout)
     return CampusRunState.RUNNING
@@ -91,11 +104,15 @@ def _verify_start_prompt_checkpoint(
         raise IntentValidationError("start checkpoint device does not match intent")
     try:
         expected.require_page(WeComPage.START_PROMPT)
+        expected.require_enterprise(intent.target_enterprise)
         capture = getattr(device, "capture_wecom_checkpoint", None)
         if not callable(capture):
             raise UnsafeWeComCheckpoint("device does not support WeCom checkpoints")
         observed = capture(Path(expected.hierarchy_path).parent)
+        if not isinstance(observed, WeComCheckpoint):
+            raise UnsafeWeComCheckpoint("invalid WeCom checkpoint")
         observed.require_page(WeComPage.START_PROMPT)
+        observed.require_enterprise(intent.target_enterprise)
     except UnsafeWeComCheckpoint as exc:
         raise IntentValidationError(f"unsafe start checkpoint: {exc}") from exc
     if (
@@ -104,5 +121,6 @@ def _verify_start_prompt_checkpoint(
         or observed.adb_serial != expected.adb_serial
         or observed.device_fingerprint != expected.device_fingerprint
         or observed.page_fingerprint != expected.page_fingerprint
+        or observed.enterprise_identity != expected.enterprise_identity
     ):
         raise IntentValidationError("start checkpoint no longer matches expected fingerprint")
