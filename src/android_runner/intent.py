@@ -5,10 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import hashlib
+import json
+import os
 from pathlib import Path
 import re
+import sqlite3
 from threading import Lock
-from typing import Iterable
+from typing import Iterable, Protocol
 from uuid import uuid4
 
 
@@ -22,6 +25,10 @@ class IntentValidationError(IntentError):
 
 class IntentReplayError(IntentError):
     """An intent id has already authorized an action."""
+
+
+class IntentPersistenceError(IntentError):
+    """A durable intent-use store cannot safely complete an operation."""
 
 
 def route_sha256(route: Path) -> str:
@@ -141,22 +148,190 @@ class IntentReservation:
     intent_ids: tuple[str, ...]
 
 
-class IntentUseRegistry:
-    """In-memory, concurrency-safe registry of issued and consumed intent bindings."""
+class IntentUseStore(Protocol):
+    """Injectable backing store for issued/consumed intent bindings."""
 
-    def __init__(self) -> None:
+    @property
+    def is_durable(self) -> bool: ...
+
+    def register(self, intent: RunIntent) -> None: ...
+
+    def validate_registered(self, intent: RunIntent) -> None: ...
+
+    def consume(self, intent: RunIntent) -> None: ...
+
+
+def default_intent_store_path() -> Path:
+    """Return the durable store used by production authorization bridges."""
+    configured = os.environ.get("ANDROID_RUNNER_INTENT_STORE")
+    return Path(configured) if configured else Path("logs") / "intent-use.sqlite3"
+
+
+def _intent_binding(intent: RunIntent) -> str:
+    """Serialize an immutable intent canonically for durable equality checks."""
+    return json.dumps(
+        {
+            "intent_id": intent.intent_id,
+            "adb_serial": intent.adb_serial,
+            "device_fingerprint": intent.device_fingerprint,
+            "current_enterprise": intent.current_enterprise,
+            "target_enterprise": intent.target_enterprise,
+            "route_sha256": intent.route_sha256,
+            "not_before": intent.not_before.astimezone().isoformat(),
+            "not_after": intent.not_after.astimezone().isoformat(),
+            "max_duration": [
+                intent.max_duration.days,
+                intent.max_duration.seconds,
+                intent.max_duration.microseconds,
+            ],
+            "allowed_action_ids": sorted(intent.allowed_action_ids),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+class SQLiteIntentUseStore:
+    """Fail-closed, process-safe SQLite store for intent issuance and consumption.
+
+    Reservations stay process-local because an interrupted process must not
+    leave a permanent lock.  The irreversible consume operation is instead an
+    immediate SQLite transaction, so two processes cannot both authorize the
+    same click and a restarted process still sees consumed intent IDs.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS intent_uses (
+                        intent_id TEXT PRIMARY KEY,
+                        binding TEXT NOT NULL,
+                        consumed_at TEXT
+                    )
+                    """
+                )
+        except (OSError, sqlite3.Error) as exc:
+            raise IntentPersistenceError("durable intent-use store is unavailable") from exc
+
+    @property
+    def is_durable(self) -> bool:
+        return True
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.path, timeout=1.0, isolation_level=None)
+        connection.execute("PRAGMA synchronous = FULL")
+        return connection
+
+    @staticmethod
+    def _raise_for_row(intent: RunIntent, row: tuple[str, str | None] | None) -> None:
+        if row is None:
+            raise IntentValidationError(f"intent id has not been registered: {intent.intent_id}")
+        binding, consumed_at = row
+        if binding != _intent_binding(intent):
+            raise IntentReplayError(f"intent id binding does not match issued intent: {intent.intent_id}")
+        if consumed_at is not None:
+            raise IntentReplayError(f"intent id already consumed: {intent.intent_id}")
+
+    def register(self, intent: RunIntent) -> None:
+        binding = _intent_binding(intent)
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT binding, consumed_at FROM intent_uses WHERE intent_id = ?",
+                    (intent.intent_id,),
+                ).fetchone()
+                if row is None:
+                    connection.execute(
+                        "INSERT INTO intent_uses(intent_id, binding, consumed_at) VALUES (?, ?, NULL)",
+                        (intent.intent_id, binding),
+                    )
+                elif row[0] != binding:
+                    raise IntentReplayError(
+                        f"intent id binding does not match issued intent: {intent.intent_id}"
+                    )
+                connection.commit()
+        except (OSError, sqlite3.Error) as exc:
+            raise IntentPersistenceError("durable intent-use store is unavailable") from exc
+
+    def validate_registered(self, intent: RunIntent) -> None:
+        try:
+            with self._connect() as connection:
+                row = connection.execute(
+                    "SELECT binding, consumed_at FROM intent_uses WHERE intent_id = ?",
+                    (intent.intent_id,),
+                ).fetchone()
+        except (OSError, sqlite3.Error) as exc:
+            raise IntentPersistenceError("durable intent-use store is unavailable") from exc
+        self._raise_for_row(intent, row)
+
+    def consume(self, intent: RunIntent) -> None:
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT binding, consumed_at FROM intent_uses WHERE intent_id = ?",
+                    (intent.intent_id,),
+                ).fetchone()
+                self._raise_for_row(intent, row)
+                connection.execute(
+                    "UPDATE intent_uses SET consumed_at = ? WHERE intent_id = ? AND consumed_at IS NULL",
+                    (datetime.now().astimezone().isoformat(), intent.intent_id),
+                )
+                connection.commit()
+        except (OSError, sqlite3.Error) as exc:
+            raise IntentPersistenceError("durable intent-use store is unavailable") from exc
+
+
+class IntentUseRegistry:
+    """Concurrency-safe registry with an optional durable anti-replay store.
+
+    The no-argument form is intentionally in-memory for narrow unit tests.
+    Production authorization bridges must use :meth:`production`; runner
+    entrypoints reject volatile registries before provider or UI work begins.
+    """
+
+    def __init__(self, *, store: IntentUseStore | None = None) -> None:
         self._issued: dict[str, RunIntent] = {}
         self._consumed_ids: set[str] = set()
         self._reservations: dict[str, IntentReservation] = {}
         self._reserved_ids: dict[str, str] = {}
+        self._store = store
         self._lock = Lock()
+
+    @classmethod
+    def production(cls, store_path: str | Path | None = None) -> "IntentUseRegistry":
+        """Create the default durable registry or raise rather than fall back.
+
+        Callers must surface this failure as a refused run; silently replacing
+        a failed persistent store with a volatile registry would re-open replay
+        after process restart.
+        """
+        return cls(store=SQLiteIntentUseStore(store_path or default_intent_store_path()))
+
+    @property
+    def is_durable(self) -> bool:
+        return bool(self._store is not None and getattr(self._store, "is_durable", False))
+
+    def require_durable(self) -> None:
+        if not self.is_durable:
+            raise IntentPersistenceError("durable IntentUseRegistry is required for a production run")
 
     def register(self, intent: RunIntent) -> None:
         """Bind an issued id to its full immutable content before it can be consumed."""
+        if not isinstance(intent, RunIntent):
+            raise IntentValidationError("RunIntent is required")
         with self._lock:
             existing = self._issued.get(intent.intent_id)
             if existing is not None and existing != intent:
                 raise IntentReplayError(f"intent id binding does not match issued intent: {intent.intent_id}")
+            if self._store is not None:
+                self._store.register(intent)
             self._issued[intent.intent_id] = intent
 
     def validate_registered(self, intent: RunIntent) -> None:
@@ -168,10 +343,12 @@ class IntentUseRegistry:
 
     def _validate_registered_locked(self, intent: RunIntent, *, allow_reserved: bool) -> None:
         issued = self._issued.get(intent.intent_id)
-        if issued is None:
+        if issued is None and self._store is None:
             raise IntentValidationError(f"intent id has not been registered: {intent.intent_id}")
-        if issued != intent:
+        if issued is not None and issued != intent:
             raise IntentReplayError(f"intent id binding does not match issued intent: {intent.intent_id}")
+        if self._store is not None:
+            self._store.validate_registered(intent)
         if intent.intent_id in self._consumed_ids:
             raise IntentReplayError(f"intent id already consumed: {intent.intent_id}")
         if not allow_reserved and intent.intent_id in self._reserved_ids:
@@ -238,15 +415,7 @@ class IntentUseRegistry:
             if reservation.intent_ids != intent_ids:
                 raise IntentValidationError("reservation does not match this run's intent batch")
             for intent in intent_batch:
-                issued = self._issued.get(intent.intent_id)
-                if issued is None:
-                    raise IntentValidationError(f"intent id has not been registered: {intent.intent_id}")
-                if issued != intent:
-                    raise IntentReplayError(
-                        f"intent id binding does not match issued intent: {intent.intent_id}"
-                    )
-                if intent.intent_id in self._consumed_ids:
-                    raise IntentReplayError(f"intent id already consumed: {intent.intent_id}")
+                self._validate_registered_locked(intent, allow_reserved=True)
                 if self._reserved_ids.get(intent.intent_id) != reservation.reservation_id:
                     raise IntentReplayError(
                         f"intent id is not reserved by this run: {intent.intent_id}"
@@ -277,6 +446,8 @@ class IntentUseRegistry:
             if self._reserved_ids.get(intent.intent_id) != reservation.reservation_id:
                 raise IntentReplayError(f"intent id is not reserved by this run: {intent.intent_id}")
             self._validate_registered_locked(intent, allow_reserved=True)
+            if self._store is not None:
+                self._store.consume(intent)
             self._consumed_ids.add(intent.intent_id)
             self._reserved_ids.pop(intent.intent_id, None)
             if not any(
@@ -307,13 +478,7 @@ class IntentUseRegistry:
         """Validate and atomically consume an intent, rejecting replayed ids."""
         intent.validate(observation, action_id)
         with self._lock:
-            issued = self._issued.get(intent.intent_id)
-            if issued is None:
-                raise IntentValidationError(f"intent id has not been registered: {intent.intent_id}")
-            if issued != intent:
-                raise IntentReplayError(f"intent id binding does not match issued intent: {intent.intent_id}")
-            if intent.intent_id in self._consumed_ids:
-                raise IntentReplayError(f"intent id already consumed: {intent.intent_id}")
-            if intent.intent_id in self._reserved_ids:
-                raise IntentReplayError(f"intent id already reserved: {intent.intent_id}")
+            self._validate_registered_locked(intent, allow_reserved=False)
+            if self._store is not None:
+                self._store.consume(intent)
             self._consumed_ids.add(intent.intent_id)

@@ -448,7 +448,7 @@ def test_mvp_multi_account_invalid_authorization_preflight_has_no_side_effects(c
     route = tmp_path / "route.gpx"
     route.write_text("route", encoding="utf-8")
     now = datetime.now(timezone.utc)
-    registry = IntentUseRegistry()
+    registry = IntentUseRegistry.production(tmp_path / "intent-use.sqlite3")
 
     def auth(account, *, current=None, target=None):
         intent = RunIntent(
@@ -540,7 +540,7 @@ def test_mvp_releases_reserved_intents_when_provider_prepare_fails(tmp_path):
         max_duration=timedelta(minutes=30), allowed_action_ids={"campus_run.start"},
     )
     observation = RunObservation("PHONE", "fingerprint", route_sha256(route), now)
-    registry = IntentUseRegistry()
+    registry = IntentUseRegistry.production(tmp_path / "intent-use.sqlite3")
     registry.register(intent)
 
     class BadProvider(Provider):
@@ -635,7 +635,7 @@ def test_mvp_multi_account_full_flow(monkeypatch, tmp_path):
     route = tmp_path / "route.gpx"
     route.write_text("route", encoding="utf-8")
     now = datetime.now(timezone.utc)
-    registry = IntentUseRegistry()
+    registry = IntentUseRegistry.production(tmp_path / "intent-use.sqlite3")
     intents = {}
     for number, account in enumerate(["企业A", "企业B"], start=1):
         intent = RunIntent(

@@ -51,6 +51,7 @@ from android_runner.device import AndroidDevice  # noqa: E402
 from android_runner.location.provider import GpsLocatorProvider  # noqa: E402
 from android_runner.location.route import RouteError, validate_route  # noqa: E402
 from android_runner.intent import (  # noqa: E402
+    IntentPersistenceError,
     IntentUseRegistry,
     IntentValidationError,
     RunIntent,
@@ -303,9 +304,14 @@ def _validate_run_intents(
         not isinstance(intent_registry, IntentUseRegistry)
         or not callable(getattr(intent_registry, "validate_registered", None))
         or not callable(getattr(intent_registry, "consume_reserved", None))
+        or not callable(getattr(intent_registry, "require_durable", None))
         or not isinstance(intents, dict)
     ):
         raise IntentValidationError("valid per-account RunIntent authorization is required")
+    try:
+        intent_registry.require_durable()
+    except IntentPersistenceError as exc:
+        raise IntentValidationError("durable per-account RunIntent authorization is required") from exc
 
     validated: dict[str, tuple[RunIntent, RunObservation]] = {}
     for enterprise in enterprises:
@@ -349,6 +355,8 @@ def _run_task(
     # adapters. A missing or unregistered RunIntent cannot reach subprocesses
     # or device UI, even through a future caller of this internal function.
     try:
+        if intent_registry is None:
+            intent_registry = IntentUseRegistry.production()
         route_path = _resolve_route(route)
         loaded_accounts = load_accounts(ACCOUNTS_PATH)
         enterprise_list = ordered_enterprises(loaded_accounts)

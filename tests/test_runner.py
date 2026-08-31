@@ -57,7 +57,7 @@ def test_mvp_rejects_generic_callback_switcher_before_provider_or_ui_actions(mon
         max_duration=timedelta(minutes=30), allowed_action_ids={"campus_run.start"},
     )
     observation = RunObservation("PHONE", "fingerprint", route_sha256(route), now)
-    registry = IntentUseRegistry()
+    registry = IntentUseRegistry.production(tmp_path / "intent-use.sqlite3")
     registry.register(intent)
     result = runner.run_mvp(Device(), provider, route, switcher, intent=intent,
                             observation=observation, intent_registry=registry,
@@ -79,7 +79,7 @@ def test_mvp_authorized_run_reserves_before_ui_and_releases_on_ui_failure(monkey
         max_duration=timedelta(minutes=30), allowed_action_ids={"campus_run.start"},
     )
     observation = RunObservation("PHONE", "fingerprint", route_sha256(route), now)
-    registry = IntentUseRegistry()
+    registry = IntentUseRegistry.production(tmp_path / "intent-use.sqlite3")
     registry.register(intent)
     reservation_seen = []
 
@@ -187,7 +187,7 @@ def test_mvp_verified_stop_failure_after_authorized_route_returns_safe_stop(monk
         not_before=now - timedelta(minutes=1), not_after=now + timedelta(minutes=1),
         max_duration=timedelta(minutes=30), allowed_action_ids={"campus_run.start"},
     )
-    registry = IntentUseRegistry()
+    registry = IntentUseRegistry.production(tmp_path / "intent-use.sqlite3")
     registry.register(intent)
     result = runner.run_mvp(
         Device(), UnsafeProvider(), route,

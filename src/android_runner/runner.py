@@ -5,7 +5,14 @@ from pathlib import Path
 from collections.abc import Callable
 import time
 
-from .intent import IntentReservation, IntentUseRegistry, RunIntent, RunObservation, validate_route_binding
+from .intent import (
+    IntentPersistenceError,
+    IntentReservation,
+    IntentUseRegistry,
+    RunIntent,
+    RunObservation,
+    validate_route_binding,
+)
 from .state import RunState
 from .wecom.campus_run import (
     CampusRunState,
@@ -52,8 +59,13 @@ def _validate_multi_account_authorization(
         not isinstance(intent_registry, IntentUseRegistry)
         or not callable(getattr(intent_registry, "validate_registered", None))
         or not callable(getattr(intent_registry, "consume_reserved", None))
+        or not callable(getattr(intent_registry, "require_durable", None))
     ):
         return "invalid RunIntent authorization: intent_registry is not usable"
+    try:
+        intent_registry.require_durable()
+    except IntentPersistenceError as exc:
+        return f"invalid RunIntent authorization: {exc}"
     if not isinstance(intents, dict):
         return "invalid RunIntent authorization: account intent mapping is missing"
 
@@ -101,8 +113,13 @@ def _validate_single_authorization(
         or not isinstance(intent_registry, IntentUseRegistry)
         or not callable(getattr(intent_registry, "validate_registered", None))
         or not callable(getattr(intent_registry, "consume_reserved", None))
+        or not callable(getattr(intent_registry, "require_durable", None))
     ):
         return "invalid RunIntent authorization: intent, observation, and registry are required"
+    try:
+        intent_registry.require_durable()
+    except IntentPersistenceError as exc:
+        return f"invalid RunIntent authorization: {exc}"
     errors: list[str] = []
     try:
         validate_route_binding(route, intent, observation, action_id)
@@ -140,6 +157,11 @@ def run_mvp(
             state=RunState.SAFE_STOP,
         )
     if has_authorization:
+        if intent_registry is None:
+            try:
+                intent_registry = IntentUseRegistry.production()
+            except IntentPersistenceError:
+                return MvpRunResult(CampusRunState.INIT, state=RunState.SAFE_STOP)
         authorization_error = _validate_single_authorization(
             route, intent, observation, intent_registry, action_id=action_id,
         )
@@ -222,6 +244,15 @@ def run_multi_account_mvp(
     """
     if not accounts:
         return MultiRunResult()
+    if intents is not None and intent_registry is None:
+        try:
+            intent_registry = IntentUseRegistry.production()
+        except IntentPersistenceError as exc:
+            return MultiRunResult(
+                failed=list(accounts),
+                state=RunState.SAFE_STOP,
+                message=f"durable RunIntent authorization store is unavailable: {exc}",
+            )
     authorization_error = _validate_multi_account_authorization(
         accounts, route, intents, intent_registry,
     )
