@@ -185,6 +185,45 @@ class IntentUseRegistry:
                 self._reserved_ids[intent_id] = reservation.reservation_id
             return reservation
 
+    def validate_active_reservation(
+        self,
+        reservation: IntentReservation,
+        intents: Iterable[RunIntent],
+    ) -> None:
+        """Verify that this run still owns every supplied authorization."""
+        if not isinstance(reservation, IntentReservation):
+            raise IntentValidationError("IntentReservation is required")
+        try:
+            intent_batch = tuple(intents)
+        except TypeError as exc:
+            raise IntentValidationError("intent batch must be iterable") from exc
+        if not intent_batch or any(not isinstance(intent, RunIntent) for intent in intent_batch):
+            raise IntentValidationError("intent batch requires RunIntent values")
+        intent_ids = tuple(intent.intent_id for intent in intent_batch)
+        if len(set(intent_ids)) != len(intent_ids):
+            raise IntentValidationError("intent batch contains duplicate intent IDs")
+
+        with self._lock:
+            active = self._reservations.get(reservation.reservation_id)
+            if active is not reservation:
+                raise IntentReplayError("reservation is not active or is not owned by this run")
+            if reservation.intent_ids != intent_ids:
+                raise IntentValidationError("reservation does not match this run's intent batch")
+            for intent in intent_batch:
+                issued = self._issued.get(intent.intent_id)
+                if issued is None:
+                    raise IntentValidationError(f"intent id has not been registered: {intent.intent_id}")
+                if issued != intent:
+                    raise IntentReplayError(
+                        f"intent id binding does not match issued intent: {intent.intent_id}"
+                    )
+                if intent.intent_id in self._consumed_ids:
+                    raise IntentReplayError(f"intent id already consumed: {intent.intent_id}")
+                if self._reserved_ids.get(intent.intent_id) != reservation.reservation_id:
+                    raise IntentReplayError(
+                        f"intent id is not reserved by this run: {intent.intent_id}"
+                    )
+
     def consume_reserved(
         self,
         reservation: IntentReservation,

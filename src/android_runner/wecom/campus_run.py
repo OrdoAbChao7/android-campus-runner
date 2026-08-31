@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum, auto
 
 from ..device import AndroidDevice
-from ..intent import IntentReservation, IntentUseRegistry, RunIntent, RunObservation
+from ..intent import IntentReservation, IntentUseRegistry, IntentValidationError, RunIntent, RunObservation
 
 
 class CampusRunState(Enum):
@@ -49,6 +49,10 @@ def confirm_free_run(
     timeout: float = 10.0,
 ) -> CampusRunState:
     """Finalize this run's reservation immediately before confirming free-run."""
+    if not isinstance(intent_registry, IntentUseRegistry):
+        raise IntentValidationError("IntentUseRegistry is required")
+    if not isinstance(reservation, IntentReservation):
+        raise IntentValidationError("IntentReservation is required")
     intent_registry.consume_reserved(reservation, intent, observation, action_id)
     device.click(text="自由跑", timeout=timeout)
     return CampusRunState.RUNNING

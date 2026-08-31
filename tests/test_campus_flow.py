@@ -1,7 +1,7 @@
 import pytest
 from datetime import datetime, timedelta, timezone
 
-from android_runner.intent import IntentUseRegistry, RunIntent, RunObservation
+from android_runner.intent import IntentReservation, IntentUseRegistry, IntentValidationError, RunIntent, RunObservation
 from android_runner.wecom.campus_run import CampusRunState, confirm_free_run, next_state
 
 
@@ -41,6 +41,37 @@ def test_free_run_confirmation_finalizes_run_reservation_before_clicking():
         reservation=reservation,
     ) is CampusRunState.RUNNING
     assert calls == [{"text": "自由跑", "timeout": 10.0}]
+
+
+def test_free_run_rejects_duck_typed_registry_without_clicking():
+    """A lookalike registry cannot bypass the atomic reservation consumption."""
+    calls = []
+
+    class Device:
+        def click(self, **kwargs):
+            calls.append(kwargs)
+
+    class NoOpRegistry:
+        def consume_reserved(self, *args):
+            return None
+
+    now = datetime.now(timezone.utc)
+    intent = RunIntent(
+        intent_id="no-op-registry", adb_serial="PHONE", device_fingerprint="fingerprint",
+        current_enterprise="current", target_enterprise="target", route_sha256="0" * 64,
+        not_before=now - timedelta(minutes=1), not_after=now + timedelta(minutes=1),
+        max_duration=timedelta(minutes=30), allowed_action_ids={"campus_run.start"},
+    )
+    observation = RunObservation("PHONE", "fingerprint", "0" * 64, now)
+    reservation = IntentReservation("fake", "owner", (intent.intent_id,))
+
+    with pytest.raises(IntentValidationError, match="IntentUseRegistry"):
+        confirm_free_run(
+            Device(), intent=intent, observation=observation,
+            intent_registry=NoOpRegistry(), reservation=reservation,
+        )
+
+    assert calls == []
 
 
 def test_free_run_rejects_removed_boolean_bypass():

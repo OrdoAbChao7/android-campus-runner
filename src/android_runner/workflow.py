@@ -6,7 +6,7 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import Protocol
 
-from .intent import IntentReservation, IntentUseRegistry, RunIntent, RunObservation
+from .intent import IntentReservation, IntentUseRegistry, IntentValidationError, RunIntent, RunObservation
 from .wecom.account import AccountSwitchState
 from .state import RunState
 
@@ -60,6 +60,43 @@ def run_route_then_switch(provider: RouteProvider, route: Path, switcher) -> Acc
     return switcher.switch()
 
 
+def _validate_active_multi_account_reservation(
+    accounts: list[str],
+    intents: dict[str, tuple[RunIntent, RunObservation]] | None,
+    intent_registry: IntentUseRegistry | None,
+    reservation: IntentReservation | None,
+    *,
+    action_id: str,
+) -> str | None:
+    """Reject before provider/UI actions unless this run owns every authorization."""
+    if not isinstance(intent_registry, IntentUseRegistry):
+        return "IntentUseRegistry is required"
+    if not isinstance(reservation, IntentReservation):
+        return "active IntentReservation is required"
+    if not isinstance(intents, dict):
+        return "account intent mapping is required"
+
+    intent_batch: list[RunIntent] = []
+    for account in accounts:
+        binding = intents.get(account)
+        if not isinstance(binding, tuple) or len(binding) != 2:
+            return f"valid authorization is required for account: {account}"
+        intent, observation = binding
+        if not isinstance(intent, RunIntent) or not isinstance(observation, RunObservation):
+            return f"valid authorization is required for account: {account}"
+        try:
+            intent.validate(observation, action_id)
+        except IntentValidationError as exc:
+            return f"invalid authorization for account {account}: {exc}"
+        intent_batch.append(intent)
+
+    try:
+        intent_registry.validate_active_reservation(reservation, intent_batch)
+    except Exception as exc:
+        return f"invalid active IntentReservation: {exc}"
+    return None
+
+
 def run_multi_account(
     provider: RouteProvider,
     route: Path,
@@ -75,6 +112,22 @@ def run_multi_account(
     action_id: str = "campus_run.start",
 ) -> MultiRunResult:
     """Run each account only after consuming its registered start authorization."""
+    if not accounts:
+        return MultiRunResult()
+    authorization_error = _validate_active_multi_account_reservation(
+        accounts,
+        intents,
+        intent_registry,
+        reservation,
+        action_id=action_id,
+    )
+    if authorization_error is not None:
+        return MultiRunResult(
+            failed=list(accounts),
+            state=RunState.SAFE_STOP,
+            message=authorization_error,
+        )
+
     result = MultiRunResult()
     needs_cleanup = True
     try:
@@ -90,12 +143,7 @@ def run_multi_account(
                 result.failed.append(account)
                 result.state = RunState.SAFE_STOP
                 break
-            intent, observation = (intents or {}).get(account, (None, None))
-            if intent is None or observation is None or intent_registry is None:
-                log.error("no valid start authorization for account: %s", account)
-                result.failed.append(account)
-                result.state = RunState.SAFE_STOP
-                break
+            intent, observation = intents[account]
             try:
                 open_campus_run_fn(device)
                 confirm_kwargs = {
@@ -104,8 +152,7 @@ def run_multi_account(
                     "intent_registry": intent_registry,
                     "action_id": action_id,
                 }
-                if reservation is not None:
-                    confirm_kwargs["reservation"] = reservation
+                confirm_kwargs["reservation"] = reservation
                 confirm_free_run_fn(device, **confirm_kwargs)
             except Exception as exc:
                 log.error("failed to open campus run for %s: %s", account, exc)

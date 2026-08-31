@@ -87,7 +87,45 @@ def _start_authorizations(accounts: list[str]):
 
 def _run_multi_authorized(**kwargs):
     intents, registry = _start_authorizations(kwargs["accounts"])
-    return run_multi_account(**kwargs, intents=intents, intent_registry=registry)
+    if not kwargs["accounts"]:
+        return run_multi_account(**kwargs, intents=intents, intent_registry=registry)
+    reservation = registry.reserve_batch([intents[account][0] for account in kwargs["accounts"]])
+    try:
+        return run_multi_account(
+            **kwargs,
+            intents=intents,
+            intent_registry=registry,
+            reservation=reservation,
+        )
+    finally:
+        registry.release_reservation(reservation)
+
+
+def test_multi_account_requires_active_reservation_before_provider_or_ui():
+    """A missing reservation cannot be bypassed by a custom confirmation callback."""
+    provider = Provider()
+    device = Device()
+    callbacks: list[str] = []
+    intents, registry = _start_authorizations(["企业A"])
+
+    result = run_multi_account(
+        provider=provider,
+        route=Path("route.gpx"),
+        accounts=["企业A"],
+        open_campus_run_fn=lambda _device: callbacks.append("open"),
+        confirm_free_run_fn=lambda _device, **_kwargs: callbacks.append("confirm"),
+        switch_account_fn=lambda _account: True,
+        device=device,
+        intents=intents,
+        intent_registry=registry,
+    )
+
+    assert result.failed == ["企业A"]
+    assert result.state is RunState.SAFE_STOP
+    assert provider.calls == []
+    assert device.started_apps == []
+    assert device.clicks == []
+    assert callbacks == []
 
 
 def test_multi_account_single_no_switch():
