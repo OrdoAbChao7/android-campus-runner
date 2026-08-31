@@ -31,7 +31,7 @@ from typing import Iterator
 from uuid import uuid4
 
 import yaml
-from flask import Flask, Response, jsonify, request, stream_with_context
+from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
 
 # ---------------------------------------------------------------------------
 # Path anchoring
@@ -83,6 +83,16 @@ CAMPUS_RUN_DIRECT_START_AVAILABLE = True
 _pending_authorizations: dict[str, tuple[dict[str, tuple[RunIntent, RunObservation]], IntentUseRegistry, str, str, float]] = {}
 _pending_lock = threading.Lock()
 _AUTH_CONFIRMATION = "START_CAMPUS_RUN"
+
+
+@app.route("/", methods=["GET"])
+def index() -> Response:
+    return send_from_directory(BASE_DIR / "dashboard" / "static", "index.html")
+
+
+@app.route("/static/<path:filename>", methods=["GET"])
+def static_file(filename: str) -> Response:
+    return send_from_directory(BASE_DIR / "dashboard" / "static", filename)
 
 # ---------------------------------------------------------------------------
 # Shared run-state

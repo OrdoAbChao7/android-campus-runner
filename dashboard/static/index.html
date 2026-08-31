@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>校园跑 · 受保护控制台</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <p class="eyebrow">ANDROID RUNNER / LOCAL ONLY</p>
+      <h1>校园跑控制台</h1>
+      <p class="muted">先授权，再启动。页面不会保存 Token 或账号密码。</p>
+    </header>
+
+    <section class="card" aria-labelledby="setup-title">
+      <h2 id="setup-title">1 · 运行设置</h2>
+      <div class="grid">
+        <label>本地控制 Token<input id="token" type="password" autocomplete="off"></label>
+        <label>设备序列号<input id="serial" placeholder="例如 192.168.1.52:43025" autocomplete="off"></label>
+        <label>企业<select id="enterprise"></select></label>
+        <label>路线<select id="route"></select></label>
+      </div>
+      <label class="confirm"><input id="confirm" type="checkbox"> 我确认手机已连接，且当前企业微信停留在可执行的校园跑环境</label>
+      <div class="actions">
+        <button id="authorize" class="primary" disabled>采集检查点并授权</button>
+        <button id="start" disabled>启动已授权任务</button>
+        <button id="stop" class="danger" disabled>请求停止</button>
+      </div>
+      <p id="message" class="message" role="status"></p>
+    </section>
+
+    <section class="card" aria-labelledby="status-title">
+      <div class="status-head"><h2 id="status-title">2 · 运行状态</h2><span id="badge" class="badge">空闲</span></div>
+      <dl class="facts"><div><dt>当前企业</dt><dd id="current">—</dd></div><div><dt>已完成</dt><dd id="completed">—</dd></div><div><dt>失败</dt><dd id="failed">—</dd></div></dl>
+      <pre id="logs" aria-label="运行日志"></pre>
+    </section>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

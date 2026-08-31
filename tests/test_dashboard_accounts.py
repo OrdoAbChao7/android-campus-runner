@@ -39,6 +39,12 @@ def test_accounts_api_exposes_only_credential_ref(monkeypatch, tmp_path):
     assert account["credential_ref"] == "env:A"
 
 
+def test_dashboard_serves_minimal_control_page():
+    response = dashboard.app.test_client().get("/")
+    assert response.status_code == 200
+    assert "采集检查点并授权" in response.get_data(as_text=True)
+
+
 def test_accounts_api_rejects_password_without_writing(monkeypatch, tmp_path, control_token):
     path = tmp_path / "accounts.yaml"
     monkeypatch.setattr(dashboard, "ACCOUNTS_PATH", path)
