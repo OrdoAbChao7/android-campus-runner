@@ -45,13 +45,11 @@ Focused commits:
 5. `fc1aba1` — durable intent replay protection
 6. `95e39f4` — runner state/evidence summaries
 
-Final verification: `pytest -q` — `133 passed, 3 skipped`.
+Final verification: `pytest -q` — `163 passed`.
 
 ## Remaining boundaries
 
-- Flask is not installed in this verification environment, so the Flask-backed
-  dashboard integration tests are skipped; static dashboard security checks do
-  run.
+- Flask is installed and the Flask-backed dashboard integration tests pass.
 - No real device, WeCom session, GPS provider, login/logout, OTP, or CAPTCHA
   flow was exercised. The repository intentionally does not provide those as
   an unauthorised direct-start path.
