@@ -65,3 +65,13 @@ Verification: `pytest -q` completed with `85 passed, 1 skipped`.
 - Added regressions for an empty registry, an unregistered intent, a registered-binding mismatch, and an already-consumed intent; all assert `SAFE_STOP` and no provider/UI side effects.
 
 Verification: `pytest -q` completed with `89 passed, 1 skipped`.
+
+## Fix round 6 — atomic run-owned intent reservations
+
+- Added opaque `IntentReservation` claims and lock-protected `reserve_batch()` all-or-nothing checks for registered, exact, unused intents.
+- Added reservation-only finalization and release APIs; direct competing consumption and competing reservations are rejected while a claim is active.
+- `run_multi_account_mvp` (and the authorized single-run path) reserves all intents before provider preparation/UI navigation, passes the run-owned claim to `confirm_free_run`, and releases any unconsumed claims in all cleanup paths.
+- `confirm_free_run` now finalizes only the active reservation after the caller's Campus Run UI navigation/fingerprint boundary, immediately before the irreversible start tap.
+- Added concurrent reservation, atomic rollback, competing-consumption, provider-failure release/retry, and authorized single-run release regressions.
+
+Verification: `pytest -q` completed with `94 passed, 1 skipped`.

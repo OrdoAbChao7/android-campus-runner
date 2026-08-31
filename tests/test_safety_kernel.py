@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timedelta
+from threading import Barrier, Thread
 
 import pytest
 
@@ -83,6 +84,61 @@ def test_intent_consumption_rejects_mutated_copy_before_original_is_consumed():
         registry.consume(changed, observation(adb_serial="other-device", route_sha256="b" * 64), "start-route")
 
     registry.consume(intent, observation(), "start-route")
+
+
+def test_batch_reservation_is_atomic_when_threads_compete_for_same_intent():
+    registry = IntentUseRegistry()
+    intent = make_intent()
+    registry.register(intent)
+    start = Barrier(3)
+    successes = []
+    failures = []
+
+    def reserve():
+        start.wait()
+        try:
+            successes.append(registry.reserve_batch([intent]))
+        except Exception as exc:  # one contender must lose the reservation race
+            failures.append(exc)
+
+    threads = [Thread(target=reserve) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    start.wait()
+    for thread in threads:
+        thread.join()
+
+    assert len(successes) == 1
+    assert len(failures) == 1
+    assert isinstance(failures[0], IntentReplayError)
+    registry.release_reservation(successes[0])
+
+
+def test_batch_reservation_is_all_or_nothing_and_release_allows_retry():
+    registry = IntentUseRegistry()
+    first = make_intent(intent_id="first")
+    second = make_intent(intent_id="second")
+    registry.register(first)
+
+    with pytest.raises(ValueError, match="registered"):
+        registry.reserve_batch([first, second])
+
+    reservation = registry.reserve_batch([first])
+    registry.release_reservation(reservation)
+    retry = registry.reserve_batch([first])
+    registry.release_reservation(retry)
+
+
+def test_reserved_intent_cannot_be_consumed_by_competing_path():
+    registry = IntentUseRegistry()
+    intent = make_intent()
+    registry.register(intent)
+    reservation = registry.reserve_batch([intent])
+
+    with pytest.raises(IntentReplayError, match="reserved"):
+        registry.consume(intent, observation(), "start-route")
+
+    registry.release_reservation(reservation)
 
 
 def test_intent_is_immutable():

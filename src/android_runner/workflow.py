@@ -6,7 +6,7 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import Protocol
 
-from .intent import IntentUseRegistry, RunIntent, RunObservation
+from .intent import IntentReservation, IntentUseRegistry, RunIntent, RunObservation
 from .wecom.account import AccountSwitchState
 from .state import RunState
 
@@ -71,6 +71,7 @@ def run_multi_account(
     *,
     intents: dict[str, tuple[RunIntent, RunObservation]] | None = None,
     intent_registry: IntentUseRegistry | None = None,
+    reservation: IntentReservation | None = None,
     action_id: str = "campus_run.start",
 ) -> MultiRunResult:
     """Run each account only after consuming its registered start authorization."""
@@ -97,13 +98,15 @@ def run_multi_account(
                 break
             try:
                 open_campus_run_fn(device)
-                confirm_free_run_fn(
-                    device,
-                    intent=intent,
-                    observation=observation,
-                    intent_registry=intent_registry,
-                    action_id=action_id,
-                )
+                confirm_kwargs = {
+                    "intent": intent,
+                    "observation": observation,
+                    "intent_registry": intent_registry,
+                    "action_id": action_id,
+                }
+                if reservation is not None:
+                    confirm_kwargs["reservation"] = reservation
+                confirm_free_run_fn(device, **confirm_kwargs)
             except Exception as exc:
                 log.error("failed to open campus run for %s: %s", account, exc)
                 result.failed.append(account)

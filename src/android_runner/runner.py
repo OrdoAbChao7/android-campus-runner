@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from .intent import IntentUseRegistry, RunIntent, RunObservation
+from .intent import IntentReservation, IntentUseRegistry, RunIntent, RunObservation
 from .state import RunState
 from .wecom.campus_run import CampusRunState, confirm_free_run, open_campus_run
 from .wecom.account import AccountSwitchState, WeComEnterpriseSwitcher
@@ -40,7 +40,7 @@ def _validate_multi_account_authorization(
     if (
         not isinstance(intent_registry, IntentUseRegistry)
         or not callable(getattr(intent_registry, "validate_registered", None))
-        or not callable(getattr(intent_registry, "consume", None))
+        or not callable(getattr(intent_registry, "consume_reserved", None))
     ):
         return "invalid RunIntent authorization: intent_registry is not usable"
     if not isinstance(intents, dict):
@@ -75,6 +75,36 @@ def _validate_multi_account_authorization(
     return None
 
 
+def _validate_single_authorization(
+    intent: RunIntent | None,
+    observation: RunObservation | None,
+    intent_registry: IntentUseRegistry | None,
+    *,
+    action_id: str = "campus_run.start",
+) -> str | None:
+    """Validate a single authorization before touching provider or device UI."""
+    if (
+        not isinstance(intent, RunIntent)
+        or not isinstance(observation, RunObservation)
+        or not isinstance(intent_registry, IntentUseRegistry)
+        or not callable(getattr(intent_registry, "validate_registered", None))
+        or not callable(getattr(intent_registry, "consume_reserved", None))
+    ):
+        return "invalid RunIntent authorization: intent, observation, and registry are required"
+    errors: list[str] = []
+    try:
+        intent.validate(observation, action_id)
+    except Exception as exc:
+        errors.append(str(exc))
+    try:
+        intent_registry.validate_registered(intent)
+    except Exception as exc:
+        errors.append(str(exc))
+    if errors:
+        return "invalid RunIntent authorization before provider/UI actions: " + "; ".join(errors)
+    return None
+
+
 def run_mvp(
     device,
     provider,
@@ -87,27 +117,45 @@ def run_mvp(
     action_id: str = "campus_run.start",
 ) -> MvpRunResult:
     """Execute the authorized MVP flow, stopping safely at the start prompt by default."""
-    prepared = provider.prepare()
-    if not getattr(prepared, "ok", True):
-        return MvpRunResult(CampusRunState.INIT, state=_cleanup_state(provider))
-    if hasattr(provider, "ready") and not provider.ready():
-        return MvpRunResult(CampusRunState.INIT, state=_cleanup_state(provider))
-    state = open_campus_run(device)
-    if intent is None or observation is None or intent_registry is None:
-        return MvpRunResult(state, state=_cleanup_state(provider))
-    try:
-        confirm_free_run(
-            device,
-            intent=intent,
-            observation=observation,
-            intent_registry=intent_registry,
-            action_id=action_id,
+    reservation: IntentReservation | None = None
+    has_authorization = intent is not None or observation is not None or intent_registry is not None
+    if has_authorization:
+        authorization_error = _validate_single_authorization(
+            intent, observation, intent_registry, action_id=action_id,
         )
-    except Exception:
-        return MvpRunResult(state, state=_cleanup_state(provider))
-    account_state = run_route_then_switch(provider, route, switcher)
-    run_state = RunState.SAFE_STOP if account_state is AccountSwitchState.ABORT else RunState.IDLE
-    return MvpRunResult(CampusRunState.RUNNING, account_state, run_state)
+        if authorization_error is not None:
+            return MvpRunResult(CampusRunState.INIT, state=RunState.SAFE_STOP)
+        try:
+            reservation = intent_registry.reserve_batch([intent])
+        except Exception:
+            return MvpRunResult(CampusRunState.INIT, state=RunState.SAFE_STOP)
+
+    try:
+        prepared = provider.prepare()
+        if not getattr(prepared, "ok", True):
+            return MvpRunResult(CampusRunState.INIT, state=_cleanup_state(provider))
+        if hasattr(provider, "ready") and not provider.ready():
+            return MvpRunResult(CampusRunState.INIT, state=_cleanup_state(provider))
+        state = open_campus_run(device)
+        if reservation is None:
+            return MvpRunResult(state, state=_cleanup_state(provider))
+        try:
+            confirm_free_run(
+                device,
+                intent=intent,
+                observation=observation,
+                intent_registry=intent_registry,
+                reservation=reservation,
+                action_id=action_id,
+            )
+        except Exception:
+            return MvpRunResult(state, state=_cleanup_state(provider))
+        account_state = run_route_then_switch(provider, route, switcher)
+        run_state = RunState.SAFE_STOP if account_state is AccountSwitchState.ABORT else RunState.IDLE
+        return MvpRunResult(CampusRunState.RUNNING, account_state, run_state)
+    finally:
+        if reservation is not None:
+            intent_registry.release_reservation(reservation)
 
 
 def run_multi_account_mvp(
@@ -144,36 +192,51 @@ def run_multi_account_mvp(
             message=authorization_error,
         )
 
-    # Prepare the GPS provider once before any runs start.
-    prepared = provider.prepare()
-    if not getattr(prepared, "ok", True):
-        _stop_safely(provider)
-        return MultiRunResult(failed=list(accounts), state=RunState.SAFE_STOP)
+    try:
+        reservation = intent_registry.reserve_batch(
+            [intents[account][0] for account in accounts],
+        )
+    except Exception as exc:
+        return MultiRunResult(
+            failed=list(accounts),
+            state=RunState.SAFE_STOP,
+            message=f"invalid RunIntent authorization reservation: {exc}",
+        )
 
-    if hasattr(provider, "ready") and not provider.ready():
-        _stop_safely(provider)
-        return MultiRunResult(failed=list(accounts), state=RunState.SAFE_STOP)
+    try:
+        # Prepare the GPS provider once before any runs start.
+        prepared = provider.prepare()
+        if not getattr(prepared, "ok", True):
+            _stop_safely(provider)
+            return MultiRunResult(failed=list(accounts), state=RunState.SAFE_STOP)
 
-    # Build a switch function: given the next enterprise name, perform the switch.
-    # Track the current enterprise in a mutable container so the closure can update it.
-    _current_ref: list[str | None] = [current_account]
+        if hasattr(provider, "ready") and not provider.ready():
+            _stop_safely(provider)
+            return MultiRunResult(failed=list(accounts), state=RunState.SAFE_STOP)
 
-    def switch_to(next_enterprise: str) -> bool:
-        switcher = WeComEnterpriseSwitcher(device, target=next_enterprise, current=_current_ref[0])
-        state = switcher.switch()
-        ok = state is AccountSwitchState.READY
-        if ok:
-            _current_ref[0] = next_enterprise
-        return ok
+        # Build a switch function: given the next enterprise name, perform the switch.
+        # Track the current enterprise in a mutable container so the closure can update it.
+        _current_ref: list[str | None] = [current_account]
 
-    return run_multi_account(
-        provider=provider,
-        route=route,
-        accounts=accounts,
-        open_campus_run_fn=open_campus_run,
-        confirm_free_run_fn=confirm_free_run,
-        switch_account_fn=switch_to,
-        device=device,
-        intents=intents,
-        intent_registry=intent_registry,
-    )
+        def switch_to(next_enterprise: str) -> bool:
+            switcher = WeComEnterpriseSwitcher(device, target=next_enterprise, current=_current_ref[0])
+            state = switcher.switch()
+            ok = state is AccountSwitchState.READY
+            if ok:
+                _current_ref[0] = next_enterprise
+            return ok
+
+        return run_multi_account(
+            provider=provider,
+            route=route,
+            accounts=accounts,
+            open_campus_run_fn=open_campus_run,
+            confirm_free_run_fn=confirm_free_run,
+            switch_account_fn=switch_to,
+            device=device,
+            intents=intents,
+            intent_registry=intent_registry,
+            reservation=reservation,
+        )
+    finally:
+        intent_registry.release_reservation(reservation)

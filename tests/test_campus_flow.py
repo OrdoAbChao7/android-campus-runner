@@ -20,7 +20,7 @@ def test_free_run_requires_explicit_authorization():
         confirm_free_run(Device())
 
 
-def test_free_run_confirmation_consumes_registered_intent_before_clicking():
+def test_free_run_confirmation_finalizes_run_reservation_before_clicking():
     calls = []
     class Device:
         def click(self, **kwargs): calls.append(kwargs)
@@ -34,9 +34,11 @@ def test_free_run_confirmation_consumes_registered_intent_before_clicking():
     registry = IntentUseRegistry()
     registry.register(intent)
     observation = RunObservation("PHONE", "fingerprint", "0" * 64, now)
+    reservation = registry.reserve_batch([intent])
 
     assert confirm_free_run(
         Device(), intent=intent, observation=observation, intent_registry=registry,
+        reservation=reservation,
     ) is CampusRunState.RUNNING
     assert calls == [{"text": "自由跑", "timeout": 10.0}]
 

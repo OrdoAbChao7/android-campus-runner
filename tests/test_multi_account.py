@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from android_runner import runner
-from android_runner.intent import IntentUseRegistry, RunIntent, RunObservation, route_sha256
+from android_runner.intent import IntentReplayError, IntentUseRegistry, RunIntent, RunObservation, route_sha256
 from android_runner.wecom.campus_run import CampusRunState
 from android_runner.workflow import MultiRunResult, run_multi_account
 from android_runner.state import RunState
@@ -395,6 +395,42 @@ def test_mvp_multi_account_registry_preflight_has_no_side_effects(case, tmp_path
     assert provider.calls == []
     assert device.started_apps == []
     assert device.clicks == []
+
+
+def test_mvp_releases_reserved_intents_when_provider_prepare_fails(tmp_path):
+    route = tmp_path / "route.gpx"
+    route.write_text("route", encoding="utf-8")
+    now = datetime.now(timezone.utc)
+    intent = RunIntent(
+        intent_id="release-after-prepare", adb_serial="PHONE", device_fingerprint="fingerprint",
+        current_enterprise="企业A", target_enterprise="企业A", route_sha256=route_sha256(route),
+        not_before=now - timedelta(minutes=1), not_after=now + timedelta(minutes=1),
+        max_duration=timedelta(minutes=30), allowed_action_ids={"campus_run.start"},
+    )
+    observation = RunObservation("PHONE", "fingerprint", route_sha256(route), now)
+    registry = IntentUseRegistry()
+    registry.register(intent)
+
+    class BadProvider(Provider):
+        def prepare(self):
+            try:
+                registry.reserve_batch([intent])
+            except IntentReplayError:
+                self.saw_reservation = True
+            else:
+                self.saw_reservation = False
+            return type("R", (), {"ok": False})()
+
+    provider = BadProvider()
+    result = runner.run_multi_account_mvp(
+        device=Device(), provider=provider, route=route, accounts=["企业A"],
+        intents={"企业A": (intent, observation)}, intent_registry=registry,
+    )
+
+    assert result.state is RunState.SAFE_STOP
+    assert provider.saw_reservation is True
+    retry = registry.reserve_batch([intent])
+    registry.release_reservation(retry)
 
 
 def test_mvp_multi_account_cleanup_failure_returns_safe_stop():
