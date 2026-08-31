@@ -80,6 +80,10 @@ app = Flask(__name__)
 # resulting one-shot binding.  It never accepts caller-supplied fingerprints.
 INTENT_BRIDGE_AVAILABLE = True
 CAMPUS_RUN_DIRECT_START_AVAILABLE = True
+CAMPUS_RUN_DISABLED_MESSAGE = (
+    "campus-run requires /api/run/authorize followed by /api/run/start; "
+    "direct unauthorized starts are refused"
+)
 _pending_authorizations: dict[str, tuple[dict[str, tuple[RunIntent, RunObservation]], IntentUseRegistry, str, str, float]] = {}
 _pending_lock = threading.Lock()
 _AUTH_CONFIRMATION = "START_CAMPUS_RUN"
