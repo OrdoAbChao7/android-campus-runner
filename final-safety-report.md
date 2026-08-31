@@ -1,6 +1,6 @@
 # Final safety report
 
-Date: 2026-08-31  
+Date: 2026-08-31
 Branch: `codex/ide-wip-preserve`
 
 ## Result
