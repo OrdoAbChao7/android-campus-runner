@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -23,9 +24,10 @@ else:
         "dashboard_safety_audit",
         Path(__file__).parents[1] / "dashboard" / "app.py",
     )
-    dashboard = importlib.util.module_from_spec(_SPEC)
-    assert _SPEC.loader is not None
-    _SPEC.loader.exec_module(dashboard)
+dashboard = importlib.util.module_from_spec(_SPEC)
+assert _SPEC.loader is not None
+sys.modules[_SPEC.name] = dashboard
+_SPEC.loader.exec_module(dashboard)
 
 
 def _intent_and_observation(route: Path, *, enterprise: str = "企业A", max_duration: timedelta = timedelta(minutes=30)):

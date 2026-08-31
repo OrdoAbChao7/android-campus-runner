@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import yaml
 import importlib.util
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import pytest
@@ -13,6 +14,7 @@ pytest.importorskip("flask")
 _SPEC = importlib.util.spec_from_file_location("dashboard_app", Path(__file__).parents[1] / "dashboard" / "app.py")
 dashboard = importlib.util.module_from_spec(_SPEC)
 assert _SPEC.loader is not None
+sys.modules[_SPEC.name] = dashboard
 _SPEC.loader.exec_module(dashboard)
 
 
@@ -63,11 +65,11 @@ def test_dashboard_config_does_not_persist_keep_gps(monkeypatch, tmp_path, contr
     assert "keep_gps" not in config_path.read_text(encoding="utf-8")
 
 
-def test_dashboard_run_start_requires_external_runintent(control_token):
+def test_dashboard_run_start_requires_captured_runintent(control_token):
     response = dashboard.app.test_client().post("/api/run/start", json={}, headers=control_token)
 
     assert response.status_code == 409
-    assert "RunIntent" in response.get_json()["error"]
+    assert "intent_id" in response.get_json()["error"]
 
 
 @pytest.mark.parametrize("endpoint, payload", [
@@ -254,4 +256,4 @@ def test_invalid_registered_run_intent_never_constructs_provider_or_device(
 
 def test_dashboard_run_intents_require_at_least_one_account():
     with pytest.raises(dashboard.IntentValidationError, match="at least one"):
-        dashboard._validate_run_intents([], {}, IntentUseRegistry())
+        dashboard._validate_run_intents([], Path("route.gpx"), {}, IntentUseRegistry())
