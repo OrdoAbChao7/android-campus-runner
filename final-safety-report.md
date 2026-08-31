@@ -43,7 +43,7 @@ Focused commits:
 5. `fc1aba1` — durable intent replay protection
 6. `95e39f4` — runner state/evidence summaries
 
-Final verification command: `pytest -q`.
+Final verification: `pytest -q` — `130 passed, 3 skipped`.
 
 ## Remaining boundaries
 
