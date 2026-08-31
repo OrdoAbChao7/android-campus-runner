@@ -38,3 +38,15 @@ No login, logout, OTP, CAPTCHA, or authentication action was automated.
 - Added regression coverage for unknown activity, phrase-only controls,
   callback-switcher preflight rejection, and login/logout/out-of-list switch
   rejection with zero clicks.
+
+## Fix round 2
+
+- `run_mvp` now performs the protected-switcher type check unconditionally,
+  including its no-authorization/manual-stop path, before provider preparation
+  or UI navigation.
+- Replaced the public multi-account callback parameter with the concrete
+  `WeComEnterpriseSwitchCapability`. The callback-based execution helper is
+  private and used only by unit tests; production construction in `runner`
+  receives its guarded capability from explicit device/current/enterprise data.
+- Added zero-side-effect regressions for generic switchers on both public
+  single- and multi-account entry points.

@@ -91,3 +91,30 @@ class WeComEnterpriseSwitcher(AccountSwitcher):
     def _verify(self) -> bool:
         self._checkpoint(WeComPage.ACCOUNT_HOME)
         return self.device.wait_text(self.target, timeout=5)
+
+
+class WeComEnterpriseSwitchCapability:
+    """Production-only capability for guarded sequential enterprise switching."""
+
+    def __init__(
+        self,
+        device,
+        *,
+        current: str | None,
+        logged_in_enterprises: tuple[str, ...] | list[str],
+    ):
+        self.device = device
+        self.current = current
+        self.logged_in_enterprises = tuple(logged_in_enterprises)
+
+    def switch_to(self, target: str) -> bool:
+        switcher = WeComEnterpriseSwitcher(
+            self.device,
+            target=target,
+            current=self.current,
+            logged_in_enterprises=self.logged_in_enterprises,
+        )
+        if switcher.switch() is not AccountSwitchState.READY:
+            return False
+        self.current = target
+        return True

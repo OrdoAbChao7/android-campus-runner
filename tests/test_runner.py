@@ -31,11 +31,14 @@ class Provider:
     def stop(self): self.calls.append("stop")
 
 
-def test_mvp_stops_at_prompt_by_default(monkeypatch):
+def test_mvp_rejects_generic_switcher_without_authorization_before_provider_or_ui(monkeypatch):
     monkeypatch.setattr(runner, "open_campus_run", lambda device: CampusRunState.START_PROMPT)
-    result = runner.run_mvp(Device(), Provider(), Path("route.gpx"), AccountSwitcher(lambda: None, lambda: None, lambda: True))
-    assert result.campus_state is CampusRunState.START_PROMPT
-    assert result.account_state is None
+    provider = Provider()
+    result = runner.run_mvp(Device(), provider, Path("route.gpx"), AccountSwitcher(lambda: None, lambda: None, lambda: True))
+    assert result.campus_state is CampusRunState.INIT
+    assert result.account_state is AccountSwitchState.ABORT
+    assert result.state is RunState.SAFE_STOP
+    assert provider.calls == []
 
 
 def test_mvp_rejects_generic_callback_switcher_before_provider_or_ui_actions(monkeypatch, tmp_path):
@@ -111,8 +114,9 @@ def test_mvp_cleans_up_when_readiness_fails(monkeypatch):
     provider = Provider()
     provider.ready = lambda: False
     result = runner.run_mvp(Device(), provider, Path("route.gpx"), AccountSwitcher(lambda: None, lambda: None, lambda: True))
-    assert result.account_state is None
-    assert provider.calls == ["prepare", "stop"]
+    assert result.account_state is AccountSwitchState.ABORT
+    assert result.state is RunState.SAFE_STOP
+    assert provider.calls == []
 
 
 def test_mvp_checks_provider_before_opening_start_prompt(monkeypatch):
@@ -123,8 +127,8 @@ def test_mvp_checks_provider_before_opening_start_prompt(monkeypatch):
 
     runner.run_mvp(Device(), provider, Path("route.gpx"), AccountSwitcher(lambda: None, lambda: None, lambda: True))
 
-    assert observed == ["ready"]
-    assert provider.calls == ["prepare", "stop"]
+    assert observed == []
+    assert provider.calls == []
 
 
 def test_mvp_never_confirms_free_run_without_single_use_intent(monkeypatch):
@@ -136,9 +140,10 @@ def test_mvp_never_confirms_free_run_without_single_use_intent(monkeypatch):
 
     result = runner.run_mvp(Device(), provider, Path("route.gpx"), AccountSwitcher(lambda: None, lambda: None, lambda: True))
 
-    assert result.campus_state is CampusRunState.START_PROMPT
+    assert result.campus_state is CampusRunState.INIT
+    assert result.state is RunState.SAFE_STOP
     assert clicks == []
-    assert provider.calls == ["prepare", "stop"]
+    assert provider.calls == []
 
 
 def test_mvp_rejects_removed_allow_start_bypass():

@@ -12,7 +12,7 @@ from .wecom.campus_run import (
     confirm_free_run,
     open_campus_run,
 )
-from .wecom.account import AccountSwitchState, WeComEnterpriseSwitcher
+from .wecom.account import AccountSwitchState, WeComEnterpriseSwitcher, WeComEnterpriseSwitchCapability
 from .workflow import MultiRunResult, run_multi_account, run_route_then_switch
 
 
@@ -126,7 +126,7 @@ def run_mvp(
     """Execute the authorized MVP flow, stopping safely at the start prompt by default."""
     reservation: IntentReservation | None = None
     has_authorization = intent is not None or observation is not None or intent_registry is not None
-    if has_authorization and not isinstance(switcher, WeComEnterpriseSwitcher):
+    if not isinstance(switcher, WeComEnterpriseSwitcher):
         return MvpRunResult(
             CampusRunState.INIT,
             account_state=AccountSwitchState.ABORT,
@@ -236,22 +236,11 @@ def run_multi_account_mvp(
             _stop_safely(provider)
             return MultiRunResult(failed=list(accounts), state=RunState.SAFE_STOP)
 
-        # Build a switch function: given the next enterprise name, perform the switch.
-        # Track the current enterprise in a mutable container so the closure can update it.
-        _current_ref: list[str | None] = [current_account]
-
-        def switch_to(next_enterprise: str) -> bool:
-            switcher = WeComEnterpriseSwitcher(
-                device,
-                target=next_enterprise,
-                current=_current_ref[0],
-                logged_in_enterprises=tuple(logged_in_enterprises or ()),
-            )
-            state = switcher.switch()
-            ok = state is AccountSwitchState.READY
-            if ok:
-                _current_ref[0] = next_enterprise
-            return ok
+        switcher_capability = WeComEnterpriseSwitchCapability(
+            device,
+            current=current_account,
+            logged_in_enterprises=tuple(logged_in_enterprises or ()),
+        )
 
         def confirm_with_checkpoint(_device, **kwargs):
             return confirm_free_run(
@@ -266,7 +255,7 @@ def run_multi_account_mvp(
             accounts=accounts,
             open_campus_run_fn=open_campus_run,
             confirm_free_run_fn=confirm_with_checkpoint,
-            switch_account_fn=switch_to,
+            switcher_capability=switcher_capability,
             device=device,
             intents=intents,
             intent_registry=intent_registry,

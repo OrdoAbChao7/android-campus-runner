@@ -8,10 +8,11 @@ from pathlib import Path
 import pytest
 
 from android_runner import runner
+from android_runner.wecom import account as wecom_account
 from android_runner.device import WeComCheckpoint, WeComPage
 from android_runner.intent import IntentReplayError, IntentUseRegistry, RunIntent, RunObservation, route_sha256
 from android_runner.wecom.campus_run import CampusRunState
-from android_runner.workflow import MultiRunResult, run_multi_account
+from android_runner.workflow import MultiRunResult, _run_multi_account_for_test, run_multi_account
 from android_runner.state import RunState
 
 
@@ -98,10 +99,10 @@ def _start_authorizations(accounts: list[str]):
 def _run_multi_authorized(**kwargs):
     intents, registry = _start_authorizations(kwargs["accounts"])
     if not kwargs["accounts"]:
-        return run_multi_account(**kwargs, intents=intents, intent_registry=registry)
+        return _run_multi_account_for_test(**kwargs, intents=intents, intent_registry=registry)
     reservation = registry.reserve_batch([intents[account][0] for account in kwargs["accounts"]])
     try:
-        return run_multi_account(
+        return _run_multi_account_for_test(
             **kwargs,
             intents=intents,
             intent_registry=registry,
@@ -119,7 +120,7 @@ def test_multi_account_requires_active_reservation_before_provider_or_ui():
     callbacks: list[str] = []
     intents, registry = _start_authorizations(["企业A"])
 
-    result = run_multi_account(
+    result = _run_multi_account_for_test(
         provider=provider,
         route=Path("route.gpx"),
         accounts=["企业A"],
@@ -137,6 +138,29 @@ def test_multi_account_requires_active_reservation_before_provider_or_ui():
     assert device.started_apps == []
     assert device.clicks == []
     assert callbacks == []
+
+
+def test_public_multi_account_rejects_generic_switch_capability_before_provider_or_ui():
+    provider = Provider()
+    device = Device()
+    intents, registry = _start_authorizations(["企业A"])
+    reservation = registry.reserve_batch([intents["企业A"][0]])
+    try:
+        result = run_multi_account(
+            provider=provider, route=Path("route.gpx"), accounts=["企业A"],
+            open_campus_run_fn=lambda _device: None,
+            confirm_free_run_fn=lambda _device, **_kwargs: None,
+            device=device, intents=intents, intent_registry=registry, reservation=reservation,
+            switcher_capability=object(),
+        )
+    finally:
+        registry.release_reservation(reservation)
+
+    assert result.state is RunState.SAFE_STOP
+    assert result.failed == ["企业A"]
+    assert provider.calls == []
+    assert device.started_apps == []
+    assert device.clicks == []
 
 
 def test_multi_account_single_no_switch():
@@ -281,7 +305,7 @@ def test_multi_account_missing_app_result_proof_aborts_without_switching():
     intents, registry = _start_authorizations(["企业A", "企业B"])
     reservation = registry.reserve_batch([intents["企业A"][0], intents["企业B"][0]])
     try:
-        result = run_multi_account(
+        result = _run_multi_account_for_test(
             provider=provider, route=Path("route.gpx"), accounts=["企业A", "企业B"],
             open_campus_run_fn=_make_fns()[0], confirm_free_run_fn=_make_fns()[1],
             switch_account_fn=lambda name: switches.append(name) or True, device=Device(),
@@ -320,7 +344,7 @@ def test_multi_account_rejects_keep_gps_execution_path():
     provider = Provider()
 
     with pytest.raises(TypeError):
-        run_multi_account(
+        _run_multi_account_for_test(
             provider=provider,
             route=Path("route.gpx"),
             accounts=["企业A"],
@@ -552,7 +576,7 @@ def test_mvp_multi_account_full_flow(monkeypatch, tmp_path):
             from android_runner.wecom.account import AccountSwitchState
             return AccountSwitchState.READY
 
-    monkeypatch.setattr(runner, "WeComEnterpriseSwitcher", FakeSwitcher)
+    monkeypatch.setattr(wecom_account, "WeComEnterpriseSwitcher", FakeSwitcher)
 
     provider = Provider()
     route = tmp_path / "route.gpx"

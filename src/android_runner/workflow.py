@@ -7,7 +7,11 @@ from collections.abc import Callable
 from typing import Protocol
 
 from .intent import IntentReservation, IntentUseRegistry, IntentValidationError, RunIntent, RunObservation
-from .wecom.account import AccountSwitchState, WeComEnterpriseSwitcher
+from .wecom.account import (
+    AccountSwitchState,
+    WeComEnterpriseSwitcher,
+    WeComEnterpriseSwitchCapability,
+)
 from .state import RunState
 
 log = logging.getLogger(__name__)
@@ -113,7 +117,7 @@ def _validate_active_multi_account_reservation(
     return None
 
 
-def run_multi_account(
+def _run_multi_account_for_test(
     provider: RouteProvider,
     route: Path,
     accounts: list[str],
@@ -230,3 +234,41 @@ def run_multi_account(
                 result.failed = list(dict.fromkeys(result.failed + accounts))
             result.state = RunState.SAFE_STOP
     return result
+
+
+def run_multi_account(
+    provider: RouteProvider,
+    route: Path,
+    accounts: list[str],
+    open_campus_run_fn: Callable[..., object],
+    confirm_free_run_fn: Callable[..., object],
+    device,
+    *,
+    switcher_capability: WeComEnterpriseSwitchCapability | None = None,
+    intents: dict[str, tuple[RunIntent, RunObservation]] | None = None,
+    intent_registry: IntentUseRegistry | None = None,
+    reservation: IntentReservation | None = None,
+    action_id: str = "campus_run.start",
+    app_result_verified_fn: Callable[[str], bool] | None = None,
+) -> MultiRunResult:
+    """Production multi-account flow using only a guarded WeCom capability."""
+    if not isinstance(switcher_capability, WeComEnterpriseSwitchCapability):
+        return MultiRunResult(
+            failed=list(accounts),
+            state=RunState.SAFE_STOP,
+            message="WeComEnterpriseSwitchCapability is required",
+        )
+    return _run_multi_account_for_test(
+        provider=provider,
+        route=route,
+        accounts=accounts,
+        open_campus_run_fn=open_campus_run_fn,
+        confirm_free_run_fn=confirm_free_run_fn,
+        switch_account_fn=switcher_capability.switch_to,
+        device=device,
+        intents=intents,
+        intent_registry=intent_registry,
+        reservation=reservation,
+        action_id=action_id,
+        app_result_verified_fn=app_result_verified_fn,
+    )
