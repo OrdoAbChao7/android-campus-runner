@@ -7,7 +7,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from .intent import IntentReservation, IntentUseRegistry, IntentValidationError, RunIntent, RunObservation
-from .wecom.account import AccountSwitchState
+from .wecom.account import AccountSwitchState, WeComEnterpriseSwitcher
 from .state import RunState
 
 log = logging.getLogger(__name__)
@@ -61,6 +61,8 @@ def run_route_then_switch(
     app_result_verified: Callable[[], bool] | None = None,
 ) -> AccountSwitchState:
     """Switch only after independent app-result proof and verified provider shutdown."""
+    if not isinstance(switcher, WeComEnterpriseSwitcher):
+        return AccountSwitchState.ABORT
     if not run_route_with_cleanup(provider, route):
         return AccountSwitchState.ABORT
     if app_result_verified is None:

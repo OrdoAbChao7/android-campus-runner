@@ -23,7 +23,10 @@ def test_checkpoint_captures_wecom_start_prompt_evidence_and_stable_fingerprint(
             return {"package": "com.tencent.wework", "activity": "com.tencent.wework.launch.WwMainActivity"}
 
         def dump_hierarchy(self):
-            return '<hierarchy><node class="android.widget.TextView" text="自由跑" resource-id="run.start" /></hierarchy>'
+            return (
+                '<hierarchy><node class="android.widget.TextView" text="自由跑" '
+                'resource-id="com.tencent.wework:id/campus_run_free_run" /></hierarchy>'
+            )
 
     device = AndroidDevice.__new__(AndroidDevice)
     device.serial = "PHONE-1"
@@ -70,4 +73,25 @@ def test_checkpoint_classifier_rejects_non_wecom_foreground_package():
             package="com.android.settings",
             activity="com.android.settings.Settings",
             hierarchy='<hierarchy><node text="自由跑" /></hierarchy>',
+        )
+
+
+def test_checkpoint_classifier_rejects_unknown_wecom_activity_even_with_start_controls():
+    with pytest.raises(UnsafeWeComCheckpoint, match="activity"):
+        classify_wecom_page(
+            package="com.tencent.wework",
+            activity="com.tencent.wework.unrecognized.DebugActivity",
+            hierarchy=(
+                '<hierarchy><node text="自由跑" '
+                'resource-id="com.tencent.wework:id/campus_run_free_run" /></hierarchy>'
+            ),
+        )
+
+
+def test_checkpoint_classifier_rejects_trigger_phrase_without_known_control_signature():
+    with pytest.raises(UnsafeWeComCheckpoint, match="unknown"):
+        classify_wecom_page(
+            package="com.tencent.wework",
+            activity="com.tencent.wework.launch.WwMainActivity",
+            hierarchy='<hierarchy><node text="自由跑" resource-id="untrusted.trigger" /></hierarchy>',
         )

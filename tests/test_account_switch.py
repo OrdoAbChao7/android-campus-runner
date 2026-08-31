@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from android_runner.device import WeComCheckpoint, WeComPage
+from android_runner.device import WeComCheckpoint, WeComPage, classify_wecom_page
 from android_runner.wecom.account import AccountSwitchState, AccountSwitcher, WeComEnterpriseSwitcher
 
 
@@ -72,6 +72,28 @@ def test_enterprise_switcher_refuses_unsafe_checkpoint_before_opening():
 
         def capture_wecom_checkpoint(self, _directory):
             return _checkpoint(WeComPage.START_PROMPT, "a" * 64)
+
+        def click(self, **kwargs): self.calls.append(kwargs)
+
+    device = Device()
+    switcher = WeComEnterpriseSwitcher(
+        device, "目标企业", current="当前企业",
+        logged_in_enterprises=("当前企业", "目标企业"),
+    )
+    assert switcher.switch() is AccountSwitchState.ABORT
+    assert device.calls == []
+
+
+def test_enterprise_switcher_rejects_login_or_logout_checkpoint_without_clicking():
+    class Device:
+        def __init__(self): self.calls = []
+
+        def capture_wecom_checkpoint(self, _directory):
+            return classify_wecom_page(
+                package="com.tencent.wework",
+                activity="com.tencent.wework.launch.WwMainActivity",
+                hierarchy='<hierarchy><node text="退出登录" /></hierarchy>',
+            )
 
         def click(self, **kwargs): self.calls.append(kwargs)
 

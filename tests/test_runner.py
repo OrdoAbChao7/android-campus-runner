@@ -5,7 +5,7 @@ from android_runner import runner
 from android_runner.device import WeComCheckpoint, WeComPage
 from android_runner.intent import IntentReplayError, IntentUseRegistry, RunIntent, RunObservation, route_sha256
 from android_runner.state import RunState
-from android_runner.wecom.account import AccountSwitchState, AccountSwitcher
+from android_runner.wecom.account import AccountSwitchState, AccountSwitcher, WeComEnterpriseSwitcher
 from android_runner.wecom.campus_run import CampusRunState
 
 
@@ -38,7 +38,7 @@ def test_mvp_stops_at_prompt_by_default(monkeypatch):
     assert result.account_state is None
 
 
-def test_mvp_runs_route_then_switches_when_authorized(monkeypatch, tmp_path):
+def test_mvp_rejects_generic_callback_switcher_before_provider_or_ui_actions(monkeypatch, tmp_path):
     monkeypatch.setattr(runner, "open_campus_run", lambda device: CampusRunState.START_PROMPT)
     monkeypatch.setattr(runner, "confirm_free_run", lambda device, **kwargs: CampusRunState.RUNNING)
     provider = Provider()
@@ -58,9 +58,10 @@ def test_mvp_runs_route_then_switches_when_authorized(monkeypatch, tmp_path):
     result = runner.run_mvp(Device(), provider, route, switcher, intent=intent,
                             observation=observation, intent_registry=registry,
                             app_result_verified=lambda: True)
-    assert result.campus_state is CampusRunState.RUNNING
-    assert result.account_state is AccountSwitchState.READY
-    assert provider.calls == ["prepare", "route", "stop"]
+    assert result.campus_state is CampusRunState.INIT
+    assert result.account_state is AccountSwitchState.ABORT
+    assert result.state is RunState.SAFE_STOP
+    assert provider.calls == []
 
 
 def test_mvp_authorized_run_reserves_before_ui_and_releases_on_ui_failure(monkeypatch, tmp_path):
@@ -90,7 +91,11 @@ def test_mvp_authorized_run_reserves_before_ui_and_releases_on_ui_failure(monkey
     monkeypatch.setattr(runner, "open_campus_run", open_campus_run)
     monkeypatch.setattr(runner, "confirm_free_run", lambda _device, **_kwargs: (_ for _ in ()).throw(RuntimeError("UI fingerprint mismatch")))
     result = runner.run_mvp(
-        Device(), Provider(), route, AccountSwitcher(lambda: None, lambda: None, lambda: True),
+        Device(), Provider(), route,
+        WeComEnterpriseSwitcher(
+            Device(), "target", current="current",
+            logged_in_enterprises=("current", "target"),
+        ),
         intent=intent, observation=observation, intent_registry=registry,
     )
 
@@ -179,7 +184,11 @@ def test_mvp_verified_stop_failure_after_authorized_route_returns_safe_stop(monk
     registry = IntentUseRegistry()
     registry.register(intent)
     result = runner.run_mvp(
-        Device(), UnsafeProvider(), route, AccountSwitcher(lambda: None, lambda: None, lambda: True),
+        Device(), UnsafeProvider(), route,
+        WeComEnterpriseSwitcher(
+            Device(), "target", current="current",
+            logged_in_enterprises=("current", "target"),
+        ),
         intent=intent,
         observation=RunObservation("PHONE", "fingerprint", route_sha256(route), now),
         intent_registry=registry,

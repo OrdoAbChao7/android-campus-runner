@@ -126,6 +126,12 @@ def run_mvp(
     """Execute the authorized MVP flow, stopping safely at the start prompt by default."""
     reservation: IntentReservation | None = None
     has_authorization = intent is not None or observation is not None or intent_registry is not None
+    if has_authorization and not isinstance(switcher, WeComEnterpriseSwitcher):
+        return MvpRunResult(
+            CampusRunState.INIT,
+            account_state=AccountSwitchState.ABORT,
+            state=RunState.SAFE_STOP,
+        )
     if has_authorization:
         authorization_error = _validate_single_authorization(
             intent, observation, intent_registry, action_id=action_id,

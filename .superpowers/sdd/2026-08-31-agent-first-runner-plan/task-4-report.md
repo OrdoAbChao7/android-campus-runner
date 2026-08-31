@@ -25,3 +25,16 @@
 `pytest -q` completed with `106 passed, 1 skipped`.
 
 No login, logout, OTP, CAPTCHA, or authentication action was automated.
+
+## Fix round 1
+
+- Replaced the broad `com.tencent.wework.*` activity check and trigger-phrase
+  matching with an exact activity allowlist plus required text/resource-id page
+  signatures. Unknown activities and phrase-only pages now remain unknown.
+- `run_mvp` rejects an authorized generic callback switcher before provider or
+  UI actions, and `run_route_then_switch` rejects it before route execution.
+  Production switching therefore uses the protected `WeComEnterpriseSwitcher`
+  boundary only.
+- Added regression coverage for unknown activity, phrase-only controls,
+  callback-switcher preflight rejection, and login/logout/out-of-list switch
+  rejection with zero clicks.

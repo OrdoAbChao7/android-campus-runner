@@ -46,7 +46,7 @@ class WeComCheckpoint:
             raise UnsafeWeComCheckpoint("checkpoint timestamp must be UTC")
         if self.foreground_package != WECOM_PACKAGE:
             raise UnsafeWeComCheckpoint("foreground package is not WeCom")
-        if not self.foreground_activity.startswith(f"{WECOM_PACKAGE}."):
+        if self.foreground_activity not in _KNOWN_WECOM_ACTIVITIES:
             raise UnsafeWeComCheckpoint("foreground activity is not recognized as WeCom")
         if not self.adb_serial or not self.device_fingerprint:
             raise UnsafeWeComCheckpoint("checkpoint device identity is incomplete")
@@ -64,14 +64,35 @@ _UNSAFE_PAGE_MARKERS = (
     "验证码", "人机验证", "安全验证", "身份验证", "重新登录",
 )
 
+_KNOWN_WECOM_ACTIVITIES = frozenset({
+    "com.tencent.wework.launch.WwMainActivity",
+    "com.tencent.wework.common.webview.WwWebActivity",
+})
+_SAFE_PAGE_SIGNATURES = {
+    WeComPage.START_PROMPT: (
+        "自由跑",
+        "com.tencent.wework:id/campus_run_free_run",
+    ),
+    WeComPage.ACCOUNT_HOME: (
+        "工作台",
+        "com.tencent.wework:id/nts",
+    ),
+    WeComPage.ACCOUNT_SWITCHER: (
+        "切换企业",
+        "com.tencent.wework:id/enterprise_switcher",
+    ),
+}
 
-def _page_fingerprint(hierarchy: str) -> str:
-    """Hash stable semantic node attributes, excluding volatile bounds/index data."""
+
+def _hierarchy_metadata(hierarchy: str) -> tuple[str, frozenset[str], frozenset[str]]:
+    """Extract only stable UI data used by the narrow page allowlist."""
     try:
         root = ET.fromstring(hierarchy)
     except ET.ParseError as exc:
         raise UnsafeWeComCheckpoint("unable to parse UI hierarchy") from exc
     nodes = []
+    texts: set[str] = set()
+    resource_ids: set[str] = set()
     for node in root.iter():
         attributes = tuple(
             (name, node.attrib.get(name, ""))
@@ -80,28 +101,31 @@ def _page_fingerprint(hierarchy: str) -> str:
         )
         if attributes:
             nodes.append(attributes)
+        text = node.attrib.get("text", "")
+        resource_id = node.attrib.get("resource-id", "")
+        if text:
+            texts.add(text)
+        if resource_id:
+            resource_ids.add(resource_id)
     if not nodes:
         raise UnsafeWeComCheckpoint("UI hierarchy has no semantic nodes")
     canonical = repr(tuple(nodes)).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
+    return hashlib.sha256(canonical).hexdigest(), frozenset(texts), frozenset(resource_ids)
 
 
 def classify_wecom_page(*, package: str, activity: str, hierarchy: str) -> tuple[WeComPage, str]:
     """Recognize only pages where the runner has a narrowly defined safe action."""
     if package != WECOM_PACKAGE:
         raise UnsafeWeComCheckpoint("foreground package is not WeCom")
-    if not activity.startswith(f"{WECOM_PACKAGE}."):
+    if activity not in _KNOWN_WECOM_ACTIVITIES:
         raise UnsafeWeComCheckpoint("foreground activity is not recognized as WeCom")
-    fingerprint = _page_fingerprint(hierarchy)
+    fingerprint, texts, resource_ids = _hierarchy_metadata(hierarchy)
     normalized = hierarchy.casefold()
     if any(marker in normalized for marker in _UNSAFE_PAGE_MARKERS):
         raise UnsafeWeComCheckpoint("authentication or re-authentication screen is unsafe")
-    if "自由跑" in hierarchy:
-        return WeComPage.START_PROMPT, fingerprint
-    if "com.tencent.wework:id/nts" in hierarchy:
-        return WeComPage.ACCOUNT_HOME, fingerprint
-    if ("切换" in hierarchy and "企业" in hierarchy) or "enterprise switch" in normalized:
-        return WeComPage.ACCOUNT_SWITCHER, fingerprint
+    for page, (required_text, required_resource_id) in _SAFE_PAGE_SIGNATURES.items():
+        if required_text in texts and required_resource_id in resource_ids:
+            return page, fingerprint
     raise UnsafeWeComCheckpoint("unknown WeCom page")
 
 
