@@ -15,17 +15,17 @@ intentionally non-starting.
 | CLI (`android-runner` command) | **Safety-gated** | `doctor`, `run-route`, and `provider-status` work; `campus-run` deliberately refuses direct start |
 | Account config (`config/accounts.yaml`) | **Validated schema** | YAML schema defined, loader + validator in `accounts.py` |
 | Flask backend (`dashboard/app.py`) | **Safety-gated** | `/api/run/authorize` captures a live start checkpoint; `/api/run/start` consumes its one-shot intent |
-| Web frontend (`dashboard/static/`) | **TODO** | Any future UI must keep authorization and start as separate protected actions |
+| Web frontend (`dashboard/static/`) | **MVP** | Local control page keeps authorization and start as separate protected actions |
 
 ### Future frontend scope
 
-A future frontend can talk to the Flask backend at `http://localhost:5050`, but it must not imply that it can start Campus Run directly.
+The included MVP frontend talks to the Flask backend at `http://localhost:5050`; it never bypasses the protected authorization bridge.
 
-**Required pages / panels:**
+**MVP panels:**
 
-1. **账号管理** — table of accounts (`enterprise`, `phone`, optional `credential_ref`), add / edit / delete rows, save button (`POST /api/accounts`)
-2. **运行配置** — form for `serial`, `route` (dropdown from `GET /api/routes`), `gps_config`, `adb`; save button (`POST /api/config`)
-3. **今日看板** — show progress and the explicit `intent_bridge_available: true` status; keep authorization and start as separate actions
+1. **运行设置** — token, serial, configured enterprise and route selectors
+2. **双步骤控制** — capture checkpoint/authorize, then start the returned intent
+3. **今日看板** — progress, stop request, and live status/log stream
 
 **Backend API already available (all at `http://localhost:5050`):**
 
