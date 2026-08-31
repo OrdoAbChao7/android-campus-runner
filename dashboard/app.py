@@ -703,7 +703,7 @@ def run_authorize() -> Response:
             max_duration=timedelta(minutes=float(minutes)),
             allowed_action_ids=frozenset({"campus_run.start"}),
         )
-        registry = IntentUseRegistry.production()
+        registry = IntentUseRegistry.production(BASE_DIR / "logs" / "intent-use.sqlite3")
         registry.register(intent)
         observation = RunObservation(
             adb_serial=serial,
