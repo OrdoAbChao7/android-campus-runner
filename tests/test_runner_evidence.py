@@ -81,3 +81,41 @@ def test_multi_runner_writes_state_and_evidence_summary_when_intent_is_missing(t
     summary = json.loads(result.evidence_summary.read_text(encoding="utf-8"))["payload"]
     assert summary["final_state"] == "SAFE_STOP"
     assert summary["outcome"] == "refused"
+
+
+def test_single_runner_ready_exception_verifies_cleanup_and_finalizes_safe_stop(tmp_path):
+    route = tmp_path / "route.gpx"
+    route.write_text("route", encoding="utf-8")
+    intent, observation = _intent(route, intent_id="ready-exception")
+    registry = IntentUseRegistry.production(tmp_path / "intent-use.sqlite3")
+    registry.register(intent)
+
+    class Provider:
+        def __init__(self):
+            self.calls = []
+
+        def prepare(self):
+            self.calls.append("prepare")
+            return type("Result", (), {"ok": True})()
+
+        def ready(self):
+            self.calls.append("ready")
+            raise RuntimeError("status payload failure")
+
+        def stop_verified(self):
+            self.calls.append("verified-stop")
+            return type("Result", (), {"ok": True})()
+
+    provider = Provider()
+    result = runner.run_mvp(
+        object(), provider, route,
+        WeComEnterpriseSwitcher(object(), "企业A", current="企业A", logged_in_enterprises=("企业A",)),
+        intent=intent, observation=observation, intent_registry=registry,
+        evidence_root=tmp_path / "evidence",
+    )
+
+    assert result.state is RunState.SAFE_STOP
+    assert provider.calls == ["prepare", "ready", "verified-stop"]
+    assert result.evidence_summary is not None and result.evidence_summary.is_file()
+    summary = json.loads(result.evidence_summary.read_text(encoding="utf-8"))["payload"]
+    assert summary["final_state"] == "SAFE_STOP"

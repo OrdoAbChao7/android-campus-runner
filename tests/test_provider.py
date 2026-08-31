@@ -94,3 +94,18 @@ def test_failed_stop_latches_provider_until_inactive_status_is_confirmed():
     provider._run = lambda command: ProviderResult(command, 0, '{"simulationActive": false}', "")
     assert provider.stop_verified(timeout=0).ok is True
     assert provider.prepare().ok is True
+
+
+def test_ready_fails_closed_for_non_object_json_status_payloads():
+    provider = GpsLocatorProvider({"status": ["gps", "status"]})
+    for payload in ("[]", "null", '"ready"'):
+        provider._run = lambda command, payload=payload: ProviderResult(command, 0, payload, "")
+        assert provider.ready() is False
+
+
+def test_status_returns_result_for_non_object_json_status_payload():
+    provider = GpsLocatorProvider({"status": ["gps", "status"]})
+    provider._run = lambda command: ProviderResult(command, 0, "[]", "")
+    result = provider.status()
+    assert isinstance(result, ProviderResult)
+    assert result.ok is True

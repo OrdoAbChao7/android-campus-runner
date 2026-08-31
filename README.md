@@ -271,7 +271,7 @@ every target enterprise — the runner does **not** perform a full login.
 | Variable | Default | Description |
 |---|---|---|
 | `ANDROID_RUNNER_ADB` | `adb` | Path to the ADB executable |
-| `ANDROID_RUNNER_INTENT_STORE` | `logs/intent-uses.sqlite3` | Durable SQLite store for issued/consumed RunIntent bindings |
+| `ANDROID_RUNNER_INTENT_STORE` | `logs/intent-use.sqlite3` | Durable SQLite store for issued/consumed RunIntent bindings |
 
 ---
 

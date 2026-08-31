@@ -70,6 +70,8 @@ class GpsLocatorProvider:
             payload = json.loads(result.stdout.strip().splitlines()[-1])
         except (ValueError, IndexError):
             return False
+        if not isinstance(payload, dict):
+            return False
         return bool(
             payload.get("available")
             and payload.get("mockLocationReady")

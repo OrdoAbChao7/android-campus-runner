@@ -383,7 +383,18 @@ def run_mvp(
                 reason="provider preparation failed",
                 authorized=has_authorization,
             )
-        if hasattr(provider, "ready") and not provider.ready():
+        try:
+            provider_ready = not hasattr(provider, "ready") or provider.ready()
+        except Exception:
+            _stop_safely(provider)
+            return _finish_mvp(
+                evidence,
+                MvpRunResult(CampusRunState.INIT, state=RunState.SAFE_STOP),
+                outcome="failed",
+                reason="provider readiness check failed",
+                authorized=has_authorization,
+            )
+        if not provider_ready:
             return _finish_mvp(
                 evidence,
                 MvpRunResult(CampusRunState.INIT, state=_cleanup_state(provider)),
@@ -560,7 +571,19 @@ def run_multi_account_mvp(
                 account_count=len(accounts),
             )
 
-        if hasattr(provider, "ready") and not provider.ready():
+        try:
+            provider_ready = not hasattr(provider, "ready") or provider.ready()
+        except Exception:
+            _stop_safely(provider)
+            return _finish_multi(
+                evidence,
+                MultiRunResult(failed=list(accounts), state=RunState.SAFE_STOP),
+                outcome="failed",
+                reason="provider readiness check failed",
+                authorized=True,
+                account_count=len(accounts),
+            )
+        if not provider_ready:
             _stop_safely(provider)
             return _finish_multi(
                 evidence,

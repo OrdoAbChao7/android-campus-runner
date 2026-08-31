@@ -19,13 +19,13 @@ CAPTCHA.
 | Dashboard single-account illusion | Dashboard submits one guarded multi-account session; the protected capability calls `ensure_active` before each account, switching or verifying the actual enterprise. | `tests/test_dashboard_security_static.py` and `tests/test_multi_account.py`. |
 | Route duration overrun | Route execution receives the authorization's maximum duration, detects timeout with an injectable clock, verifies shutdown, enters `SAFE_STOP`, and does not switch accounts. | `tests/test_duration_watchdog.py`. |
 | Unsafe GPS readiness/shutdown | `simulationActive: true` is not ready; only a provider with successful `stop_verified()` qualifies as a safe shutdown. | `tests/test_safety_audit_closure.py` and `tests/test_workflow_cleanup.py`. |
-| Replay after restart | `IntentUseRegistry` accepts an injected `IntentUseStore`; production uses a SQLite store at `logs/intent-uses.sqlite3` or `ANDROID_RUNNER_INTENT_STORE`. Consumption is atomic and durable. Store failure or a volatile registry is rejected before provider/UI work. | `tests/test_intent_store.py`. |
+| Replay after restart | `IntentUseRegistry` accepts an injected `IntentUseStore`; production uses a SQLite store at `logs/intent-use.sqlite3` or `ANDROID_RUNNER_INTENT_STORE`. Consumption is atomic and durable. Store failure or a volatile registry is rejected before provider/UI work. | `tests/test_intent_store.py`. |
 | Missing execution evidence | Both runner entrypoints create a unique run-id `EvidenceWriter`/`StateMachine` session before provider/UI work and return paths to a sanitized `summary.json`. Evidence failure is fail-closed. | `tests/test_runner_evidence.py`. |
 | Misleading public status | README, CLI help/output, dashboard start response, and dashboard status now say that direct Campus Run start is intentionally unavailable without a bridge. | `tests/test_cli_route.py` and `tests/test_dashboard_security_static.py`. |
 
 ## Artifacts and operating rules
 
-- Durable intent consumption: `logs/intent-uses.sqlite3` by default.
+- Durable intent consumption: `logs/intent-use.sqlite3` by default.
 - Per-run evidence: `logs/runs/<run-id>/events.jsonl` and `summary.json`.
 - Dashboard status includes `intent_bridge_available: false` and
   `direct_campus_run_start_available: false`.
