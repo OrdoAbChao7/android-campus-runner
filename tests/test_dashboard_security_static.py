@@ -67,3 +67,15 @@ def test_dashboard_exposes_the_two_step_intent_bridge():
     assert '"intent_bridge_available"' in run_status
     assert '"direct_campus_run_start_available"' in run_status
     assert "/api/run/authorize" in source
+
+
+def test_dashboard_authorization_bridge_requires_live_checkpoint_and_confirmation():
+    source = DASHBOARD.read_text(encoding="utf-8")
+    authorize = source.split("def run_authorize", 1)[1].split("\n\n@app.route", 1)[0]
+
+    assert "_require_control_token()" in authorize
+    assert "_AUTH_CONFIRMATION" in authorize
+    assert "open_campus_run(device)" in authorize
+    assert "capture_wecom_checkpoint" in authorize
+    assert "IntentUseRegistry.production" in authorize
+    assert "route_sha256(route)" in authorize
