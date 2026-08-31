@@ -285,6 +285,16 @@ python -m pytest -q
 
 The test suite uses only stdlib and pytest — no device connection required.
 
+### Wireless ADB troubleshooting
+
+The computer and phone must be on the same reachable LAN before pairing. For
+example, `192.168.3.x/24` on the computer cannot directly reach a phone at
+`192.168.1.x`; reconnect one device to the other network and read the phone's
+current address from **Wireless debugging**. VPN/TUN clients such as Mihomo or
+Clash can also suppress mDNS discovery; if discovery is empty, record the
+current adapter state first and temporarily suspend only the relevant tunnel
+for the ADB test, then restore it.
+
 ---
 
 ## Safety notes
