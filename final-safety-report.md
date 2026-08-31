@@ -6,7 +6,8 @@ Branch: `codex/ide-wip-preserve`
 ## Result
 
 The audited direct-start path is now fail-closed. The current public CLI and
-dashboard have no RunIntent bridge and intentionally cannot start Campus Run.
+dashboard now expose a local two-step RunIntent bridge; the CLI remains
+non-starting and direct requests without a captured intent are rejected.
 They do not tap **自由跑**, perform login/logout, handle OTP, or bypass a
 CAPTCHA.
 
@@ -27,8 +28,9 @@ CAPTCHA.
 
 - Durable intent consumption: `logs/intent-use.sqlite3` by default.
 - Per-run evidence: `logs/runs/<run-id>/events.jsonl` and `summary.json`.
-- Dashboard status includes `intent_bridge_available: false` and
-  `direct_campus_run_start_available: false`.
+- Dashboard status includes `intent_bridge_available: true` and
+  `direct_campus_run_start_available: true`; start still requires a captured
+  single-use intent and matching route/serial.
 - A future bridge must issue/register the full immutable intent in the durable
   store; it must not replace a persistence failure with an in-memory registry.
 

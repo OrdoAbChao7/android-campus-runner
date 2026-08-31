@@ -471,6 +471,7 @@ def run_multi_account_mvp(
     clock: Callable[[], float] = time.monotonic,
     evidence_root: Path | None = None,
     run_id: str | None = None,
+    start_prompt_verified: bool = False,
 ) -> MultiRunResult:
     """Run campus-run sequentially for every account in *accounts*.
 
@@ -615,7 +616,10 @@ def run_multi_account_mvp(
             provider=provider,
             route=route,
             accounts=accounts,
-            open_campus_run_fn=open_campus_run,
+            open_campus_run_fn=(
+                (lambda _device: CampusRunState.START_PROMPT)
+                if start_prompt_verified else open_campus_run
+            ),
             confirm_free_run_fn=confirm_with_checkpoint,
             switcher_capability=switcher_capability,
             device=device,

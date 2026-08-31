@@ -57,12 +57,13 @@ def test_dashboard_uses_one_guarded_multi_account_runner_session():
     assert "accounts=[enterprise]" not in run_task
 
 
-def test_dashboard_exposes_that_the_intent_bridge_is_unavailable():
+def test_dashboard_exposes_the_two_step_intent_bridge():
     source = DASHBOARD.read_text(encoding="utf-8")
     run_start = source.split("def run_start", 1)[1].split("\n\n@app.route", 1)[0]
     run_status = source.split("def run_status", 1)[1].split("\n\n# ---------------------------------------------------------------------------\n# API", 1)[0]
 
     assert "INTENT_BRIDGE_AVAILABLE" in source
-    assert "intentionally disabled" in run_start
+    assert "previously captured, durable single-use authorization" in run_start
     assert '"intent_bridge_available"' in run_status
     assert '"direct_campus_run_start_available"' in run_status
+    assert "/api/run/authorize" in source

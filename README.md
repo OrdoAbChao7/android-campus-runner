@@ -1,9 +1,9 @@
 # Android Runner
 
 Windows + Android ADB automation components for supervised WeCom campus-run
-tasks. The internal runner has guarded route, enterprise, and provider
-controls, but the public CLI and dashboard intentionally have **no RunIntent
-bridge** and therefore cannot directly start Campus Run.
+tasks. The runner has guarded route, enterprise, and provider controls. The
+local dashboard exposes a two-step RunIntent bridge; the CLI remains
+intentionally non-starting.
 
 ---
 
@@ -14,7 +14,7 @@ bridge** and therefore cannot directly start Campus Run.
 | Core automation (`src/android_runner/`) | **Guarded internal API** | Route hash, enterprise checkpoints, durable single-use intent consumption, provider shutdown, and multi-account switching |
 | CLI (`android-runner` command) | **Safety-gated** | `doctor`, `run-route`, and `provider-status` work; `campus-run` deliberately refuses direct start |
 | Account config (`config/accounts.yaml`) | **Validated schema** | YAML schema defined, loader + validator in `accounts.py` |
-| Flask backend (`dashboard/app.py`) | **Safety-gated** | Configuration/status endpoints work; `/api/run/start` returns 409 until an external bridge is implemented |
+| Flask backend (`dashboard/app.py`) | **Safety-gated** | `/api/run/authorize` captures a live start checkpoint; `/api/run/start` consumes its one-shot intent |
 | Web frontend (`dashboard/static/`) | **TODO** | Any future UI must show direct start as unavailable unless it uses the protected bridge |
 
 ### Future frontend scope
@@ -25,7 +25,7 @@ A future frontend can talk to the Flask backend at `http://localhost:5050`, but 
 
 1. **账号管理** — table of accounts (`enterprise`, `phone`, optional `credential_ref`), add / edit / delete rows, save button (`POST /api/accounts`)
 2. **运行配置** — form for `serial`, `route` (dropdown from `GET /api/routes`), `gps_config`, `adb`; save button (`POST /api/config`)
-3. **今日看板** — show progress and the explicit `intent_bridge_available: false` status; do not provide an action that bypasses the protected bridge
+3. **今日看板** — show progress and the explicit `intent_bridge_available: true` status; keep authorization and start as separate actions
 
 **Backend API already available (all at `http://localhost:5050`):**
 
@@ -36,7 +36,8 @@ A future frontend can talk to the Flask backend at `http://localhost:5050`, but 
 | `GET` | `/api/config` | Get dashboard run config |
 | `POST` | `/api/config` | Save dashboard run config |
 | `GET` | `/api/routes` | List `.gpx`/`.kml` files in `routes/` |
-| `POST` | `/api/run/start` | Intentionally refuses direct start (409): no external single-use RunIntent bridge is present |
+| `POST` | `/api/run/authorize` | Capture the live WeCom start prompt and issue one durable RunIntent (requires token + confirmation phrase) |
+| `POST` | `/api/run/start` | Start only the previously authorized intent; route and serial must match the capture |
 | `POST` | `/api/run/stop` | Request graceful stop after current account |
 | `GET` | `/api/run/status` | Snapshot of run state (JSON) |
 | `GET` | `/api/run/stream` | SSE stream — emits `{type:"log", line:"..."}` and `{type:"status", event:"...", ...}` |
@@ -186,9 +187,12 @@ python dashboard/app.py
 # Open http://localhost:5050 in a browser
 ```
 
-The dashboard exposes `intent_bridge_available: false` through
-`GET /api/run/status`; `POST /api/run/start` intentionally returns 409 and
-does not construct a provider or device adapter.
+The dashboard exposes `intent_bridge_available: true` through
+`GET /api/run/status`. First call `/api/run/authorize` while the intended
+device is connected and use the explicit confirmation phrase
+`START_CAMPUS_RUN`; then call `/api/run/start` with the returned `intent_id`.
+The bridge captures the device fingerprint and WeCom enterprise from the live
+screen, so these values are never trusted from the request body.
 
 ### CLI — check environment
 
@@ -196,11 +200,10 @@ does not construct a provider or device adapter.
 python -m android_runner doctor
 ```
 
-### CLI — campus-run is intentionally non-starting
+### CLI — campus-run remains intentionally non-starting
 
-The following command validates its command-line shape and then exits with a
-non-zero status. It does not open WeCom, start GPS playback, switch accounts,
-or tap **自由跑** because no external single-use RunIntent bridge is wired in.
+The CLI does not issue authorization tokens or tap **自由跑**. Use the local
+dashboard's two-step bridge for a supervised run.
 
 ```powershell
 python -m android_runner campus-run `
@@ -240,11 +243,10 @@ python -m android_runner provider-status --config config/gps-locator.yaml --seri
 
 ---
 
-## Guarded internal runner path
+## Guarded runner path
 
-The following describes the internal path available only to an external bridge
-that registers durable, single-use `RunIntent` values. It is not exposed by
-the current CLI or dashboard.
+The dashboard bridge registers durable, single-use `RunIntent` values before
+the runner is started.
 
 ```
 campus-run flow (multi-account)
@@ -287,9 +289,9 @@ The test suite uses only stdlib and pytest — no device connection required.
 
 ## Safety notes
 
-- The CLI and dashboard currently expose no RunIntent bridge. `campus-run`
-  and `POST /api/run/start` deliberately refuse direct execution; neither can
-  tap **自由跑** in that state.
+- The CLI remains non-starting. Dashboard execution requires the two-step
+  `/api/run/authorize` then `/api/run/start` flow and cannot start without a
+  live checkpoint and durable intent.
 - `run_mvp` stops at the **自由跑** prompt unless it consumes a registered,
   durable, single-use `RunIntent` whose observation and actual route bytes
   match the authorized action.

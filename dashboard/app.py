@@ -25,9 +25,10 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Iterator
+from uuid import uuid4
 
 import yaml
 from flask import Flask, Response, jsonify, request, stream_with_context
@@ -54,6 +55,7 @@ from android_runner.cli import (  # noqa: E402
     load_provider_config,
 )
 from android_runner.device import AndroidDevice  # noqa: E402
+from android_runner.wecom.campus_run import open_campus_run  # noqa: E402
 from android_runner.location.provider import GpsLocatorProvider  # noqa: E402
 from android_runner.location.route import RouteError, validate_route  # noqa: E402
 from android_runner.intent import (  # noqa: E402
@@ -63,6 +65,7 @@ from android_runner.intent import (  # noqa: E402
     RunIntent,
     RunObservation,
     validate_route_binding,
+    route_sha256,
 )
 from android_runner.runner import run_multi_account_mvp  # noqa: E402
 
@@ -71,6 +74,15 @@ from android_runner.runner import run_multi_account_mvp  # noqa: E402
 # ---------------------------------------------------------------------------
 
 app = Flask(__name__)
+
+# The bridge is deliberately local and two-step: authorization captures the
+# live device checkpoint first, while the start endpoint can only consume the
+# resulting one-shot binding.  It never accepts caller-supplied fingerprints.
+INTENT_BRIDGE_AVAILABLE = True
+CAMPUS_RUN_DIRECT_START_AVAILABLE = True
+_pending_authorizations: dict[str, tuple[dict[str, tuple[RunIntent, RunObservation]], IntentUseRegistry, str, str, float]] = {}
+_pending_lock = threading.Lock()
+_AUTH_CONFIRMATION = "START_CAMPUS_RUN"
 
 # ---------------------------------------------------------------------------
 # Shared run-state
@@ -350,6 +362,7 @@ def _run_task(
     route: str,
     intents: object,
     intent_registry: object,
+    start_prompt_verified: bool = False,
 ) -> None:
     """Target function for the background campus-run thread.
 
@@ -419,6 +432,8 @@ def _run_task(
             return
 
         current_account = next((a.enterprise for a in loaded_accounts if a.current), None)
+        if current_account is None and len(enterprise_list) == 1:
+            current_account = enterprise_list[0]
 
         log.info(
             "starting campus-run for %d account(s): %s",
@@ -452,6 +467,7 @@ def _run_task(
                 logged_in_enterprises=tuple(enterprise_list),
                 intents=validated_intents,
                 intent_registry=intent_registry,
+                start_prompt_verified=start_prompt_verified,
                 before_account_fn=before_account,
             )
         except Exception as exc:
@@ -635,17 +651,107 @@ def get_routes() -> Response:
 # API — Task control
 # ---------------------------------------------------------------------------
 
-@app.route("/api/run/start", methods=["POST"])
-def run_start() -> Response:
-    """Refuse execution until a future safe external RunIntent bridge exists."""
+@app.route("/api/run/authorize", methods=["POST"])
+def run_authorize() -> Response:
+    """Capture a live start prompt and issue one durable RunIntent.
+
+    This is intentionally a separate action from ``/api/run/start``.  The
+    operator must explicitly provide the confirmation phrase while the phone
+    is already connected; device fingerprint and enterprise identity are read
+    from ADB/WeCom rather than accepted from the request.
+    """
     denied = _require_control_token()
     if denied is not None:
         return denied
     with _state_lock:
         if _state.running:
             return _err("a run is already in progress", 409)
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or body.get("confirm") != _AUTH_CONFIRMATION:
+        return _err("explicit confirmation is required", 400)
+    route_name = body.get("route")
+    enterprise = body.get("enterprise")
+    serial = body.get("serial", "")
+    if not isinstance(enterprise, str) or not enterprise.strip():
+        return _err("enterprise is required")
+    if not isinstance(serial, str) or not _is_valid_serial(serial) or not serial:
+        return _err("a connected device serial is required")
+    try:
+        route = _resolve_route(route_name)
+        accounts = load_accounts(ACCOUNTS_PATH)
+        names = ordered_enterprises(accounts)
+        if names != [enterprise.strip()]:
+            return _err("authorization bridge currently supports exactly one configured enterprise", 409)
+        device = AndroidDevice(DEFAULT_ADB, serial)
+        open_campus_run(device)
+        checkpoint = device.capture_wecom_checkpoint(BASE_DIR / "logs" / "checkpoints")
+        checkpoint.require_enterprise(enterprise.strip())
+        digest = route_sha256(route)
+        now = datetime.now(timezone.utc)
+        minutes = body.get("max_duration_minutes", 30)
+        if isinstance(minutes, bool) or not isinstance(minutes, (int, float)) or not 1 <= float(minutes) <= 120:
+            return _err("max_duration_minutes must be between 1 and 120")
+        intent = RunIntent(
+            intent_id=uuid4().hex,
+            adb_serial=serial,
+            device_fingerprint=checkpoint.device_fingerprint,
+            current_enterprise=enterprise.strip(),
+            target_enterprise=enterprise.strip(),
+            route_sha256=digest,
+            not_before=now - timedelta(seconds=30),
+            not_after=now + timedelta(minutes=10),
+            max_duration=timedelta(minutes=float(minutes)),
+            allowed_action_ids=frozenset({"campus_run.start"}),
+        )
+        registry = IntentUseRegistry.production()
+        registry.register(intent)
+        observation = RunObservation(
+            adb_serial=serial,
+            device_fingerprint=checkpoint.device_fingerprint,
+            route_sha256=digest,
+            observed_at=now,
+        )
+    except Exception as exc:
+        logging.getLogger("android_runner.dashboard").info("authorization refused: %s", exc)
+        return _err("could not capture a safe WeCom start checkpoint", 409)
 
-    return _err(f"campus-run is intentionally disabled; {CAMPUS_RUN_DISABLED_MESSAGE}", 409)
+    with _pending_lock:
+        _pending_authorizations[intent.intent_id] = (
+            {enterprise.strip(): (intent, observation)}, registry, route.name, serial,
+            time.monotonic() + 600,
+        )
+    return _ok(intent_id=intent.intent_id, enterprise=enterprise.strip(), route=route.name,
+               message="authorization captured; call /api/run/start with this intent_id")
+
+
+@app.route("/api/run/start", methods=["POST"])
+def run_start() -> Response:
+    """Start only a previously captured, durable single-use authorization."""
+    denied = _require_control_token()
+    if denied is not None:
+        return denied
+    with _state_lock:
+        if _state.running:
+            return _err("a run is already in progress", 409)
+    body = request.get_json(silent=True) or {}
+    intent_id = body.get("intent_id") if isinstance(body, dict) else None
+    if not isinstance(intent_id, str) or not intent_id:
+        return _err("intent_id from /api/run/authorize is required", 409)
+    with _pending_lock:
+        pending = _pending_authorizations.pop(intent_id, None)
+    if pending is None or pending[4] < time.monotonic():
+        return _err("authorization is missing or expired", 409)
+    intents, registry, route_name, serial, _expires = pending
+    if isinstance(body, dict) and (body.get("route", route_name) != route_name or body.get("serial", serial) != serial):
+        return _err("route and serial must match the captured authorization", 409)
+    with _state_lock:
+        thread = threading.Thread(
+            target=_run_task,
+            kwargs={"serial": serial, "route": route_name, "intents": intents, "intent_registry": registry},
+            daemon=True,
+        )
+        thread.start()
+    return _ok(message="guarded campus-run started", intent_id=intent_id)
 
 
 @app.route("/api/run/stop", methods=["POST"])
