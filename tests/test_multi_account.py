@@ -1,6 +1,7 @@
 """Tests for the multi-account campus-run flow."""
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -349,6 +350,46 @@ def test_mvp_multi_account_invalid_authorization_preflight_has_no_side_effects(c
 
     assert result.state is RunState.SAFE_STOP
     assert result.failed == ["企业A", "企业B"]
+    assert result.completed == []
+    assert result.message and "authorization" in result.message.lower()
+    assert provider.calls == []
+    assert device.started_apps == []
+    assert device.clicks == []
+
+
+@pytest.mark.parametrize("case", ["empty_registry", "unregistered", "binding_mismatch", "consumed"])
+def test_mvp_multi_account_registry_preflight_has_no_side_effects(case, tmp_path):
+    route = tmp_path / "route.gpx"
+    route.write_text("route", encoding="utf-8")
+    now = datetime.now(timezone.utc)
+    intent = RunIntent(
+        intent_id="registry-preflight", adb_serial="PHONE", device_fingerprint="fingerprint",
+        current_enterprise="企业A", target_enterprise="企业A", route_sha256=route_sha256(route),
+        not_before=now - timedelta(minutes=1), not_after=now + timedelta(minutes=1),
+        max_duration=timedelta(minutes=30), allowed_action_ids={"campus_run.start"},
+    )
+    observation = RunObservation("PHONE", "fingerprint", route_sha256(route), now)
+    registry = IntentUseRegistry()
+    mapped_intent = intent
+    if case == "unregistered":
+        other = replace(intent, intent_id="different-intent")
+        registry.register(other)
+    elif case == "binding_mismatch":
+        registry.register(intent)
+        mapped_intent = replace(intent, max_duration=timedelta(hours=1))
+    elif case == "consumed":
+        registry.register(intent)
+        registry.consume(intent, observation, "campus_run.start")
+
+    provider = Provider()
+    device = Device()
+    result = runner.run_multi_account_mvp(
+        device=device, provider=provider, route=route, accounts=["企业A"],
+        intents={"企业A": (mapped_intent, observation)}, intent_registry=registry,
+    )
+
+    assert result.state is RunState.SAFE_STOP
+    assert result.failed == ["企业A"]
     assert result.completed == []
     assert result.message and "authorization" in result.message.lower()
     assert provider.calls == []

@@ -118,6 +118,19 @@ class IntentUseRegistry:
                 raise IntentReplayError(f"intent id binding does not match issued intent: {intent.intent_id}")
             self._issued[intent.intent_id] = intent
 
+    def validate_registered(self, intent: RunIntent) -> None:
+        """Validate an issued, unconsumed binding without changing registry state."""
+        if not isinstance(intent, RunIntent):
+            raise IntentValidationError("RunIntent is required")
+        with self._lock:
+            issued = self._issued.get(intent.intent_id)
+            if issued is None:
+                raise IntentValidationError(f"intent id has not been registered: {intent.intent_id}")
+            if issued != intent:
+                raise IntentReplayError(f"intent id binding does not match issued intent: {intent.intent_id}")
+            if intent.intent_id in self._consumed_ids:
+                raise IntentReplayError(f"intent id already consumed: {intent.intent_id}")
+
     def consume(self, intent: RunIntent, observation: RunObservation, action_id: str) -> None:
         """Validate and atomically consume an intent, rejecting replayed ids."""
         intent.validate(observation, action_id)

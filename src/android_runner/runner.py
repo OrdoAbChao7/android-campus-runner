@@ -37,8 +37,10 @@ def _validate_multi_account_authorization(
     action_id: str = "campus_run.start",
 ) -> str | None:
     """Validate every account binding before touching the provider or device UI."""
-    if not isinstance(intent_registry, IntentUseRegistry) or not callable(
-        getattr(intent_registry, "consume", None)
+    if (
+        not isinstance(intent_registry, IntentUseRegistry)
+        or not callable(getattr(intent_registry, "validate_registered", None))
+        or not callable(getattr(intent_registry, "consume", None))
     ):
         return "invalid RunIntent authorization: intent_registry is not usable"
     if not isinstance(intents, dict):
@@ -54,13 +56,19 @@ def _validate_multi_account_authorization(
         if not isinstance(intent, RunIntent) or not isinstance(observation, RunObservation):
             invalid.append(f"{account} (RunIntent/RunObservation required)")
             continue
+        account_errors: list[str] = []
         if intent.current_enterprise != account or intent.target_enterprise != account:
-            invalid.append(f"{account} (enterprise binding mismatch)")
-            continue
+            account_errors.append("enterprise binding mismatch")
         try:
             intent.validate(observation, action_id)
         except Exception as exc:
-            invalid.append(f"{account} ({exc})")
+            account_errors.append(str(exc))
+        try:
+            intent_registry.validate_registered(intent)
+        except Exception as exc:
+            account_errors.append(str(exc))
+        if account_errors:
+            invalid.append(f"{account} ({'; '.join(account_errors)})")
 
     if invalid:
         return "invalid RunIntent authorization before provider/UI actions: " + "; ".join(invalid)

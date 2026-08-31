@@ -57,3 +57,11 @@ Verification after this fix round: `python -m py_compile dashboard/app.py` and `
 - Added parametrized regressions covering each invalid binding and asserting zero provider/UI side effects.
 
 Verification: `pytest -q` completed with `85 passed, 1 skipped`.
+
+## Fix round 5 — registry-backed authorization preflight
+
+- Added `IntentUseRegistry.validate_registered()`, a lock-protected read-only check that requires an exact registered intent binding and rejects consumed IDs without consuming anything.
+- The multi-account runner now invokes this check for every structurally valid account authorization before preparing or probing the provider.
+- Added regressions for an empty registry, an unregistered intent, a registered-binding mismatch, and an already-consumed intent; all assert `SAFE_STOP` and no provider/UI side effects.
+
+Verification: `pytest -q` completed with `89 passed, 1 skipped`.
