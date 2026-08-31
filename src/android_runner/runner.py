@@ -202,6 +202,7 @@ def run_multi_account_mvp(
     intents: dict[str, tuple[RunIntent, RunObservation]] | None = None,
     intent_registry: IntentUseRegistry | None = None,
     app_result_verified_fn: Callable[[str], bool] | None = None,
+    before_account_fn: Callable[[str, int, int], bool] | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> MultiRunResult:
     """Run campus-run sequentially for every account in *accounts*.
@@ -282,6 +283,7 @@ def run_multi_account_mvp(
             intent_registry=intent_registry,
             reservation=reservation,
             app_result_verified_fn=app_result_verified_fn,
+            before_account_fn=before_account_fn,
             clock=clock,
         )
     finally:

@@ -172,6 +172,8 @@ def _run_multi_account_for_test(
     reservation: IntentReservation | None = None,
     action_id: str = "campus_run.start",
     app_result_verified_fn: Callable[[str], bool] | None = None,
+    ensure_account_fn: Callable[[str], bool] | None = None,
+    before_account_fn: Callable[[str, int, int], bool] | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> MultiRunResult:
     """Run each account only after consuming its registered start authorization."""
@@ -196,6 +198,28 @@ def _run_multi_account_for_test(
     try:
         for i, account in enumerate(accounts):
             log.info("[%d/%d] starting run for account: %s", i + 1, len(accounts), account)
+            if ensure_account_fn is not None:
+                try:
+                    account_verified = bool(ensure_account_fn(account))
+                except Exception:
+                    log.warning("enterprise verification failed for account: %s", account, exc_info=True)
+                    account_verified = False
+                if not account_verified:
+                    log.error("enterprise verification failed; refusing account: %s", account)
+                    result.failed.extend(accounts[i:])
+                    result.state = RunState.SAFE_STOP
+                    break
+            if before_account_fn is not None:
+                try:
+                    continue_run = bool(before_account_fn(account, i + 1, len(accounts)))
+                except Exception:
+                    log.warning("account start hook failed for account: %s", account, exc_info=True)
+                    continue_run = False
+                if not continue_run:
+                    log.info("account start hook stopped the run before account: %s", account)
+                    result.failed.extend(accounts[i:])
+                    result.state = RunState.SAFE_STOP
+                    break
             if i and hasattr(provider, "prepare"):
                 prepared = provider.prepare()
                 if not getattr(prepared, "ok", True):
@@ -305,6 +329,7 @@ def run_multi_account(
     reservation: IntentReservation | None = None,
     action_id: str = "campus_run.start",
     app_result_verified_fn: Callable[[str], bool] | None = None,
+    before_account_fn: Callable[[str, int, int], bool] | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> MultiRunResult:
     """Production multi-account flow using only a guarded WeCom capability."""
@@ -327,5 +352,7 @@ def run_multi_account(
         reservation=reservation,
         action_id=action_id,
         app_result_verified_fn=app_result_verified_fn,
+        ensure_account_fn=switcher_capability.ensure_active,
+        before_account_fn=before_account_fn,
         clock=clock,
     )

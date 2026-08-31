@@ -12,6 +12,7 @@ from android_runner.wecom import account as wecom_account
 from android_runner.device import WeComCheckpoint, WeComPage
 from android_runner.intent import IntentReplayError, IntentUseRegistry, RunIntent, RunObservation, route_sha256
 from android_runner.wecom.campus_run import CampusRunState
+from android_runner.wecom.account import WeComEnterpriseSwitchCapability
 from android_runner.workflow import MultiRunResult, _run_multi_account_for_test, run_multi_account
 from android_runner.state import RunState
 
@@ -165,6 +166,39 @@ def test_public_multi_account_rejects_generic_switch_capability_before_provider_
     assert provider.calls == []
     assert device.started_apps == []
     assert device.clicks == []
+
+
+def test_production_multi_account_verifies_each_enterprise_before_its_ui_action(monkeypatch):
+    provider = Provider()
+    intents, registry = _start_authorizations(["企业A", "企业B"])
+    reservation = registry.reserve_batch([intents["企业A"][0], intents["企业B"][0]])
+    capability = WeComEnterpriseSwitchCapability(
+        object(),
+        current="企业A",
+        logged_in_enterprises=("企业A", "企业B"),
+    )
+    verified: list[str] = []
+    monkeypatch.setattr(capability, "ensure_active", lambda enterprise: verified.append(enterprise) or True)
+    monkeypatch.setattr(capability, "switch_to", lambda _enterprise: True)
+    try:
+        result = run_multi_account(
+            provider=provider,
+            route=Path("route.gpx"),
+            accounts=["企业A", "企业B"],
+            open_campus_run_fn=lambda _device: None,
+            confirm_free_run_fn=lambda _device, **_kwargs: None,
+            device=object(),
+            switcher_capability=capability,
+            intents=intents,
+            intent_registry=registry,
+            reservation=reservation,
+            app_result_verified_fn=lambda _account: True,
+        )
+    finally:
+        registry.release_reservation(reservation)
+
+    assert result.completed == ["企业A", "企业B"]
+    assert verified == ["企业A", "企业B"]
 
 
 def test_multi_account_single_no_switch():
@@ -588,6 +622,10 @@ def test_mvp_multi_account_full_flow(monkeypatch, tmp_path):
 
         def switch(self):
             switched_to.append(self.target)
+            from android_runner.wecom.account import AccountSwitchState
+            return AccountSwitchState.READY
+
+        def verify_active(self):
             from android_runner.wecom.account import AccountSwitchState
             return AccountSwitchState.READY
 

@@ -47,3 +47,11 @@ def test_dashboard_static_intent_validation_matches_runner_preconditions():
     assert "intent.target_enterprise != enterprise" in validator
     assert 'validate_route_binding(route, intent, observation, "campus_run.start")' in validator
     assert "intent_registry.validate_registered(intent)" in validator
+
+
+def test_dashboard_uses_one_guarded_multi_account_runner_session():
+    source = DASHBOARD.read_text(encoding="utf-8")
+    run_task = source.split("def _run_task", 1)[1].split("\n\n# ---------------------------------------------------------------------------\n# API", 1)[0]
+
+    assert "accounts=enterprise_list" in run_task
+    assert "accounts=[enterprise]" not in run_task

@@ -412,67 +412,48 @@ def _run_task(
             ", ".join(enterprise_list),
         )
 
-        # Intercept each account transition to keep _state.current up-to-date.
-        # We wrap run_multi_account_mvp by patching provider.start_route so we
-        # can track which account is running.  The simplest approach: iterate
-        # accounts ourselves via a wrapping loop that checks stop_requested.
-        #
-        # Because run_multi_account_mvp is synchronous and long-running we
-        # cannot easily inject stop checks mid-run. We honour stop_requested
-        # between accounts by using a thin shim: run one account at a time via
-        # run_multi_account_mvp with a single-element list, repeating until
-        # done or stop is requested.
-
-        from android_runner.workflow import MultiRunResult  # local import for clarity
-
-        for i, enterprise in enumerate(enterprise_list):
+        def before_account(enterprise: str, index: int, total: int) -> bool:
             with _state_lock:
                 if _state.stop_requested:
                     log.info("stop requested — aborting before account: %s", enterprise)
-                    remaining = enterprise_list[i:]
-                    _state.failed.extend(remaining)
-                    break
+                    return False
                 _state.current = enterprise
+            _broadcast({
+                "type": "status",
+                "event": "account_start",
+                "account": enterprise,
+                "index": index,
+                "total": total,
+            })
+            log.info("[%d/%d] running for: %s", index, total, enterprise)
+            return True
 
-            _broadcast({"type": "status", "event": "account_start", "account": enterprise,
-                        "index": i + 1, "total": len(enterprise_list)})
-            log.info("[%d/%d] running for: %s", i + 1, len(enterprise_list), enterprise)
-
-            # Determine which account is currently active on the device for
-            # this sub-run (carry over from previous iteration).
-            sub_current = current_account if i == 0 else enterprise_list[i - 1]
-
-            try:
-                sub_result = run_multi_account_mvp(
-                    device=device,
-                    provider=provider,
-                    route=route_path,
-                    accounts=[enterprise],
-                    current_account=sub_current,
-                    intents={enterprise: validated_intents[enterprise]},
-                    intent_registry=intent_registry,
-                )
-            except Exception as exc:
-                log.error("unexpected error for account %s: %s", enterprise, exc, exc_info=True)
-                with _state_lock:
-                    _state.failed.append(enterprise)
-                _broadcast({"type": "status", "event": "account_failed", "account": enterprise,
-                            "error": str(exc)})
-                break
-
+        try:
+            multi_result = run_multi_account_mvp(
+                device=device,
+                provider=provider,
+                route=route_path,
+                accounts=enterprise_list,
+                current_account=current_account,
+                logged_in_enterprises=tuple(enterprise_list),
+                intents=validated_intents,
+                intent_registry=intent_registry,
+                before_account_fn=before_account,
+            )
+        except Exception as exc:
+            log.error("unexpected error in guarded multi-account run: %s", exc, exc_info=True)
             with _state_lock:
-                _state.completed.extend(sub_result.completed)
-                _state.failed.extend(sub_result.failed)
+                _state.failed = list(enterprise_list)
+            _broadcast({"type": "status", "event": "account_failed", "error": str(exc)})
+            return
 
-            if sub_result.failed:
-                _broadcast({"type": "status", "event": "account_failed", "account": enterprise})
-                log.error("run failed for: %s — aborting remaining accounts", enterprise)
-                with _state_lock:
-                    remaining = enterprise_list[i + 1:]
-                    _state.failed.extend(remaining)
-                break
-
+        with _state_lock:
+            _state.completed.extend(multi_result.completed)
+            _state.failed.extend(multi_result.failed)
+        for enterprise in multi_result.completed:
             _broadcast({"type": "status", "event": "account_done", "account": enterprise})
+        for enterprise in multi_result.failed:
+            _broadcast({"type": "status", "event": "account_failed", "account": enterprise})
 
     except Exception as exc:
         log.error("unhandled error in run task: %s", exc, exc_info=True)
