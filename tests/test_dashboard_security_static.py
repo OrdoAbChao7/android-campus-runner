@@ -36,3 +36,14 @@ def test_dashboard_statically_guards_writes_and_authorization_order():
     run_task = source.split("def _run_task", 1)[1]
     assert run_task.index("_validate_run_intents") < run_task.index("GpsLocatorProvider")
     assert "provider and executable configuration is not accepted" in source
+
+
+def test_dashboard_static_intent_validation_matches_runner_preconditions():
+    source = DASHBOARD.read_text(encoding="utf-8")
+    validator = source.split("def _validate_run_intents", 1)[1].split("\n\n# ---------------------------------------------------------------------------\n# Background", 1)[0]
+
+    assert "if not enterprises" in validator
+    assert "intent.current_enterprise != enterprise" in validator
+    assert "intent.target_enterprise != enterprise" in validator
+    assert 'intent.validate(observation, "campus_run.start")' in validator
+    assert "intent_registry.validate_registered(intent)" in validator

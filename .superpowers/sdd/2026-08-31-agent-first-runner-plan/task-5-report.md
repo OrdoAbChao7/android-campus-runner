@@ -22,3 +22,22 @@ pytest -q
 ```
 
 The skipped test module is Flask-dependent; the static dashboard security tests ran in this environment.
+
+## Fix round 1 — complete RunIntent validation
+
+The dashboard pre-adapter guard now mirrors the runner's authorization checks:
+
+- it rejects an empty enterprise list;
+- every account must supply a `(RunIntent, RunObservation)` pair whose current and target enterprise both match that account;
+- `RunIntent.validate(observation, "campus_run.start")` verifies route SHA-256, ADB serial, device fingerprint, time window, and action ID;
+- `IntentUseRegistry.validate_registered` verifies the exact issued intent has not been consumed or reserved.
+
+All failures happen before construction of `GpsLocatorProvider` or `AndroidDevice`. Regression cases cover registered intents with invalid route hash, serial, fingerprint, time, current enterprise, and target enterprise while asserting zero adapter constructions.
+
+Verification for this fix round:
+
+```text
+python -m compileall -q dashboard/app.py
+pytest -q
+114 passed, 1 skipped in 0.46s
+```

@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import yaml
 import importlib.util
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import pytest
+
+from android_runner.intent import IntentUseRegistry, RunIntent, RunObservation, route_sha256
 
 pytest.importorskip("flask")
 
@@ -174,3 +177,81 @@ def test_missing_run_intents_never_constructs_provider_or_device(monkeypatch, tm
     dashboard._run_task(serial="", route="safe.gpx", intents=None, intent_registry=None)
 
     assert calls == []
+
+
+def _dashboard_run_inputs(monkeypatch, tmp_path, *, intent_changes=None, observation_changes=None):
+    accounts = tmp_path / "accounts.yaml"
+    accounts.write_text(yaml.safe_dump({"accounts": [{
+        "enterprise": "企业A", "phone": "13800138000",
+    }]}), encoding="utf-8")
+    routes_dir = tmp_path / "routes"
+    routes_dir.mkdir()
+    route = routes_dir / "safe.gpx"
+    route.write_text(
+        '<gpx><trk><trkseg><trkpt lat="1" lon="2"/><trkpt lat="3" lon="4"/></trkseg></trk></gpx>',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dashboard, "ACCOUNTS_PATH", accounts)
+    monkeypatch.setattr(dashboard, "ROUTES_DIR", routes_dir)
+
+    now = datetime.now(timezone.utc)
+    intent_values = {
+        "intent_id": "dashboard-intent",
+        "adb_serial": "SERIAL",
+        "device_fingerprint": "fingerprint",
+        "current_enterprise": "企业A",
+        "target_enterprise": "企业A",
+        "route_sha256": route_sha256(route),
+        "not_before": now - timedelta(minutes=1),
+        "not_after": now + timedelta(minutes=1),
+        "max_duration": timedelta(minutes=30),
+        "allowed_action_ids": {"campus_run.start"},
+    }
+    intent_values.update(intent_changes or {})
+    intent = RunIntent(**intent_values)
+    observation_values = {
+        "adb_serial": "SERIAL",
+        "device_fingerprint": "fingerprint",
+        "route_sha256": route_sha256(route),
+        "observed_at": now,
+    }
+    observation_values.update(observation_changes or {})
+    observation = RunObservation(**observation_values)
+    registry = IntentUseRegistry()
+    registry.register(intent)
+    return intent, observation, registry
+
+
+@pytest.mark.parametrize("intent_changes, observation_changes", [
+    ({}, {"route_sha256": "f" * 64}),
+    ({}, {"adb_serial": "OTHER"}),
+    ({}, {"device_fingerprint": "other-fingerprint"}),
+    ({}, {"observed_at": datetime.now(timezone.utc) + timedelta(hours=1)}),
+    ({"current_enterprise": "企业B"}, {}),
+    ({"target_enterprise": "企业B"}, {}),
+])
+def test_invalid_registered_run_intent_never_constructs_provider_or_device(
+    monkeypatch, tmp_path, intent_changes, observation_changes,
+):
+    intent, observation, registry = _dashboard_run_inputs(
+        monkeypatch, tmp_path,
+        intent_changes=intent_changes,
+        observation_changes=observation_changes,
+    )
+    calls = []
+    monkeypatch.setattr(dashboard, "GpsLocatorProvider", lambda *args, **kwargs: calls.append("provider"))
+    monkeypatch.setattr(dashboard, "AndroidDevice", lambda *args, **kwargs: calls.append("device"))
+
+    dashboard._run_task(
+        serial="SERIAL",
+        route="safe.gpx",
+        intents={"企业A": (intent, observation)},
+        intent_registry=registry,
+    )
+
+    assert calls == []
+
+
+def test_dashboard_run_intents_require_at_least_one_account():
+    with pytest.raises(dashboard.IntentValidationError, match="at least one"):
+        dashboard._validate_run_intents([], {}, IntentUseRegistry())

@@ -290,7 +290,14 @@ def _validate_run_intents(
     intent_registry: object,
 ) -> dict[str, tuple[RunIntent, RunObservation]]:
     """Reject before adapters are constructed unless every account is authorized."""
-    if not isinstance(intent_registry, IntentUseRegistry) or not isinstance(intents, dict):
+    if not enterprises:
+        raise IntentValidationError("at least one account requires authorization")
+    if (
+        not isinstance(intent_registry, IntentUseRegistry)
+        or not callable(getattr(intent_registry, "validate_registered", None))
+        or not callable(getattr(intent_registry, "consume_reserved", None))
+        or not isinstance(intents, dict)
+    ):
         raise IntentValidationError("valid per-account RunIntent authorization is required")
 
     validated: dict[str, tuple[RunIntent, RunObservation]] = {}
@@ -301,7 +308,15 @@ def _validate_run_intents(
         intent, observation = binding
         if not isinstance(intent, RunIntent) or not isinstance(observation, RunObservation):
             raise IntentValidationError("valid per-account RunIntent authorization is required")
-        intent_registry.validate_registered(intent)
+        if intent.current_enterprise != enterprise or intent.target_enterprise != enterprise:
+            raise IntentValidationError("RunIntent enterprise binding does not match account")
+        try:
+            intent.validate(observation, "campus_run.start")
+            # This verifies the exact issued binding has not been consumed or
+            # reserved by another run before any adapter is created.
+            intent_registry.validate_registered(intent)
+        except Exception as exc:
+            raise IntentValidationError("valid per-account RunIntent authorization is required") from exc
         validated[enterprise] = (intent, observation)
     return validated
 
