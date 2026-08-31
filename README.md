@@ -1,11 +1,9 @@
 # Android Runner
 
-Windows + Android ADB automation runner for WeCom campus-run tasks.
-
-Navigates the WeCom (企业微信) **智慧体育 → 校园跑** UI automatically,
-plays a GPX/KML route through a GPS-mock provider, and switches between
-multiple enterprise accounts so every account records a completed run —
-all without touching the phone.
+Windows + Android ADB automation components for supervised WeCom campus-run
+tasks. The internal runner has guarded route, enterprise, and provider
+controls, but the public CLI and dashboard intentionally have **no RunIntent
+bridge** and therefore cannot directly start Campus Run.
 
 ---
 
@@ -13,21 +11,21 @@ all without touching the phone.
 
 | Layer | Status | Notes |
 |---|---|---|
-| Core automation (`src/android_runner/`) | **Complete** | ADB, uiautomator2, WeCom UI navigation, GPS provider, multi-account loop |
-| CLI (`android-runner` command) | **Complete** | `doctor`, `run-route`, `provider-status`, `campus-run` sub-commands |
-| Account config (`config/accounts.yaml`) | **Complete** | YAML schema defined, loader + validator in `accounts.py` |
-| Flask backend (`dashboard/app.py`) | **Complete** | All REST + SSE endpoints implemented, background thread, log capture |
-| Web frontend (`dashboard/static/`) | **TODO** | Directory exists but is empty — next agent must build the HTML/JS/CSS dashboard |
+| Core automation (`src/android_runner/`) | **Guarded internal API** | Route hash, enterprise checkpoints, durable single-use intent consumption, provider shutdown, and multi-account switching |
+| CLI (`android-runner` command) | **Safety-gated** | `doctor`, `run-route`, and `provider-status` work; `campus-run` deliberately refuses direct start |
+| Account config (`config/accounts.yaml`) | **Validated schema** | YAML schema defined, loader + validator in `accounts.py` |
+| Flask backend (`dashboard/app.py`) | **Safety-gated** | Configuration/status endpoints work; `/api/run/start` returns 409 until an external bridge is implemented |
+| Web frontend (`dashboard/static/`) | **TODO** | Any future UI must show direct start as unavailable unless it uses the protected bridge |
 
-### What the next agent needs to build
+### Future frontend scope
 
-A single-file (or minimal-file) web frontend in `dashboard/static/` that talks to the already-finished Flask backend at `http://localhost:5050`.
+A future frontend can talk to the Flask backend at `http://localhost:5050`, but it must not imply that it can start Campus Run directly.
 
 **Required pages / panels:**
 
 1. **账号管理** — table of accounts (`enterprise`, `phone`, optional `credential_ref`), add / edit / delete rows, save button (`POST /api/accounts`)
 2. **运行配置** — form for `serial`, `route` (dropdown from `GET /api/routes`), `gps_config`, `adb`; save button (`POST /api/config`)
-3. **今日看板** — progress cards per account (pending / running / done / failed), Start / Stop buttons, real-time log console fed by `GET /api/run/stream` (SSE)
+3. **今日看板** — show progress and the explicit `intent_bridge_available: false` status; do not provide an action that bypasses the protected bridge
 
 **Backend API already available (all at `http://localhost:5050`):**
 
@@ -38,12 +36,12 @@ A single-file (or minimal-file) web frontend in `dashboard/static/` that talks t
 | `GET` | `/api/config` | Get dashboard run config |
 | `POST` | `/api/config` | Save dashboard run config |
 | `GET` | `/api/routes` | List `.gpx`/`.kml` files in `routes/` |
-| `POST` | `/api/run/start` | Start campus-run task (background thread) |
+| `POST` | `/api/run/start` | Intentionally refuses direct start (409): no external single-use RunIntent bridge is present |
 | `POST` | `/api/run/stop` | Request graceful stop after current account |
 | `GET` | `/api/run/status` | Snapshot of run state (JSON) |
 | `GET` | `/api/run/stream` | SSE stream — emits `{type:"log", line:"..."}` and `{type:"status", event:"...", ...}` |
 
-**SSE event shapes:**
+**SSE event shapes (for a future protected bridge only):**
 
 ```jsonc
 // Log line
@@ -110,9 +108,8 @@ config/
   gps-locator.yaml          # real GPS config (git-ignored if you add it)
   dashboard.yaml            # dashboard run config (auto-created on first save)
 dashboard/
-  app.py                    # Flask backend — COMPLETE
-  static/                   # Web frontend — TO BE BUILT
-    index.html              # (not yet created)
+  app.py                    # Safety-gated Flask backend; no direct start bridge
+  static/                   # Optional future status UI
 logs/                       # runtime logs (git-ignored except .gitkeep)
 routes/
   smoke-test.gpx            # sample route for quick testing
@@ -181,7 +178,7 @@ accounts:
 
 ## Usage
 
-### Start the dashboard (recommended)
+### Start the dashboard status/config service
 
 ```powershell
 cd running
@@ -189,13 +186,21 @@ python dashboard/app.py
 # Open http://localhost:5050 in a browser
 ```
 
+The dashboard exposes `intent_bridge_available: false` through
+`GET /api/run/status`; `POST /api/run/start` intentionally returns 409 and
+does not construct a provider or device adapter.
+
 ### CLI — check environment
 
 ```powershell
 python -m android_runner doctor
 ```
 
-### CLI — run campus-run for multiple accounts
+### CLI — campus-run is intentionally non-starting
+
+The following command validates its command-line shape and then exits with a
+non-zero status. It does not open WeCom, start GPS playback, switch accounts,
+or tap **自由跑** because no external single-use RunIntent bridge is wired in.
 
 ```powershell
 python -m android_runner campus-run `
@@ -235,7 +240,11 @@ python -m android_runner provider-status --config config/gps-locator.yaml --seri
 
 ---
 
-## How it works
+## Guarded internal runner path
+
+The following describes the internal path available only to an external bridge
+that registers durable, single-use `RunIntent` values. It is not exposed by
+the current CLI or dashboard.
 
 ```
 campus-run flow (multi-account)
@@ -262,6 +271,7 @@ every target enterprise — the runner does **not** perform a full login.
 | Variable | Default | Description |
 |---|---|---|
 | `ANDROID_RUNNER_ADB` | `adb` | Path to the ADB executable |
+| `ANDROID_RUNNER_INTENT_STORE` | `logs/intent-uses.sqlite3` | Durable SQLite store for issued/consumed RunIntent bindings |
 
 ---
 
@@ -277,14 +287,20 @@ The test suite uses only stdlib and pytest — no device connection required.
 
 ## Safety notes
 
-- The CLI and dashboard currently do not accept or issue RunIntents. Their
-  campus-run start controls refuse execution until an external, single-use
-  `RunIntent` bridge is supplied; they never tap **自由跑** in that state.
+- The CLI and dashboard currently expose no RunIntent bridge. `campus-run`
+  and `POST /api/run/start` deliberately refuse direct execution; neither can
+  tap **自由跑** in that state.
 - `run_mvp` stops at the **自由跑** prompt unless it consumes a registered,
-  single-use `RunIntent` whose observation matches the authorized action.
+  durable, single-use `RunIntent` whose observation and actual route bytes
+  match the authorized action.
 - Each account has its own RunIntent and verified GPS shutdown; a stop
-  verification failure enters `SAFE_STOP` and prevents the next account.
-- `SafeAccountSwitcher` never switches accounts unless `allow_logout` returns
-  `True`, preventing accidental session invalidation.
+  verification or max-duration failure enters `SAFE_STOP` and prevents the
+  next account switch.
+- A durable SQLite record rejects an already-consumed intent after process
+  restart. If the durable store cannot be opened, protected runner entrypoints
+  fail closed.
+- Each `run_mvp` or `run_multi_account_mvp` invocation writes a unique
+  state/evidence summary beneath `logs/runs/` (or its injected evidence root).
 - `accounts.yaml` is listed in `.gitignore`. Do not override this.
-- The dashboard has no authentication — run it on localhost only.
+- Dashboard write endpoints require `ANDROID_RUNNER_DASHBOARD_TOKEN` and bind
+  to localhost; an absent token fails closed.

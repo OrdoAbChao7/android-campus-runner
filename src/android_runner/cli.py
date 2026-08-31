@@ -7,15 +7,18 @@ from pathlib import Path
 
 import yaml
 
-from .accounts import load_accounts, ordered_enterprises
-from .device import AndroidDevice
 from .doctor import format_report, run_doctor
 from .location.provider import GpsLocatorProvider
-from .runner import run_multi_account_mvp
 from .workflow import run_route_with_cleanup
 
 
 DEFAULT_ADB = os.environ.get("ANDROID_RUNNER_ADB", "E:\\edge download\\scrcpy-win64-v4.1\\adb.exe")
+INTENT_BRIDGE_AVAILABLE = False
+CAMPUS_RUN_DIRECT_START_AVAILABLE = False
+CAMPUS_RUN_DISABLED_MESSAGE = (
+    "campus-run is intentionally disabled: no external single-use RunIntent bridge is available; "
+    "no Campus Run action was started"
+)
 
 
 def load_provider_config(path: str | Path) -> dict:
@@ -44,7 +47,7 @@ def main() -> int:
 
     campus = sub.add_parser(
         "campus-run",
-        help="validate campus-run inputs; an external single-use RunIntent is required to start",
+        help="intentionally disabled until an external single-use RunIntent bridge is available",
     )
     campus.add_argument("--config", required=True, help="GPS Locator provider config YAML")
     campus.add_argument("--route", required=True, help="GPX or KML route file")
@@ -102,32 +105,8 @@ def main() -> int:
         return 0 if result.ok else 1
 
     if args.command == "campus-run":
-        print("campus-run requires an externally provided single-use RunIntent; no Campus Run action was started")
+        print(CAMPUS_RUN_DISABLED_MESSAGE)
         return 1
-        config = load_provider_config(args.config)
-        serial = args.serial or str(config.get("serial", ""))
-        provider = GpsLocatorProvider(config["commands"], serial=serial, cwd=config.get("working_directory"))
-        device = AndroidDevice(args.adb, serial)
-
-        if args.accounts_file:
-            loaded = load_accounts(args.accounts_file)
-            enterprise_list = ordered_enterprises(loaded, start=args.current_account)
-            current = args.current_account or next((a.enterprise for a in loaded if a.current), None)
-        else:
-            enterprise_list = args.accounts
-            current = args.current_account
-
-        multi_result = run_multi_account_mvp(
-            device=device,
-            provider=provider,
-            route=Path(args.route),
-            accounts=enterprise_list,
-            current_account=current,
-        )
-        print(f"completed: {multi_result.completed}")
-        if multi_result.failed:
-            print(f"failed:    {multi_result.failed}")
-        return 0 if not multi_result.failed else 1
 
     return 2
 

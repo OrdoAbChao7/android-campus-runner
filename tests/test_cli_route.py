@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from android_runner.cli import load_provider_config, main
+from android_runner.cli import CAMPUS_RUN_DIRECT_START_AVAILABLE, load_provider_config, main
 
 
 def test_load_provider_config_expands_commands(tmp_path: Path):
@@ -45,4 +45,7 @@ def test_campus_cli_explains_that_external_runintent_is_required(monkeypatch, ca
     )
 
     assert main() == 1
-    assert "RunIntent" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert CAMPUS_RUN_DIRECT_START_AVAILABLE is False
+    assert "RunIntent" in output
+    assert "intentionally disabled" in output

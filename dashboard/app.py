@@ -3,7 +3,7 @@
 Exposes REST endpoints and an SSE stream so the frontend can:
   - Manage accounts (config/accounts.yaml)
   - Manage run configuration (config/dashboard.yaml)
-  - Start / stop a campus-run task in a background thread
+  - Report that direct campus-run start is unavailable without an intent bridge
   - Receive real-time log lines via Server-Sent Events
 
 Run from the ``running/`` directory (or anywhere — paths are anchored to
@@ -46,7 +46,13 @@ if _src.is_dir() and str(_src) not in sys.path:
     sys.path.insert(0, str(_src))
 
 from android_runner.accounts import Account, load_accounts, ordered_enterprises  # noqa: E402
-from android_runner.cli import DEFAULT_ADB, load_provider_config  # noqa: E402
+from android_runner.cli import (  # noqa: E402
+    CAMPUS_RUN_DIRECT_START_AVAILABLE,
+    CAMPUS_RUN_DISABLED_MESSAGE,
+    DEFAULT_ADB,
+    INTENT_BRIDGE_AVAILABLE,
+    load_provider_config,
+)
 from android_runner.device import AndroidDevice  # noqa: E402
 from android_runner.location.provider import GpsLocatorProvider  # noqa: E402
 from android_runner.location.route import RouteError, validate_route  # noqa: E402
@@ -639,7 +645,7 @@ def run_start() -> Response:
         if _state.running:
             return _err("a run is already in progress", 409)
 
-    return _err("an externally provided single-use RunIntent is required; no Campus Run action was started", 409)
+    return _err(f"campus-run is intentionally disabled; {CAMPUS_RUN_DISABLED_MESSAGE}", 409)
 
 
 @app.route("/api/run/stop", methods=["POST"])
@@ -670,6 +676,9 @@ def run_status() -> Response:
             "log_lines": list(_state.log_lines),
             "started_at": _state.started_at,
             "finished_at": _state.finished_at,
+            "intent_bridge_available": INTENT_BRIDGE_AVAILABLE,
+            "direct_campus_run_start_available": CAMPUS_RUN_DIRECT_START_AVAILABLE,
+            "campus_run_start_message": CAMPUS_RUN_DISABLED_MESSAGE,
         }
     return _ok(**data)
 
@@ -708,6 +717,8 @@ def run_stream() -> Response:
                 "failed": list(_state.failed),
                 "current": _state.current,
                 "log_lines": list(_state.log_lines),
+                "intent_bridge_available": INTENT_BRIDGE_AVAILABLE,
+                "direct_campus_run_start_available": CAMPUS_RUN_DIRECT_START_AVAILABLE,
             }
         yield f"data: {json.dumps(snapshot)}\n\n"
 
