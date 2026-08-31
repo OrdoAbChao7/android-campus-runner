@@ -15,7 +15,7 @@ intentionally non-starting.
 | CLI (`android-runner` command) | **Safety-gated** | `doctor`, `run-route`, and `provider-status` work; `campus-run` deliberately refuses direct start |
 | Account config (`config/accounts.yaml`) | **Validated schema** | YAML schema defined, loader + validator in `accounts.py` |
 | Flask backend (`dashboard/app.py`) | **Safety-gated** | `/api/run/authorize` captures a live start checkpoint; `/api/run/start` consumes its one-shot intent |
-| Web frontend (`dashboard/static/`) | **TODO** | Any future UI must show direct start as unavailable unless it uses the protected bridge |
+| Web frontend (`dashboard/static/`) | **TODO** | Any future UI must keep authorization and start as separate protected actions |
 
 ### Future frontend scope
 
@@ -42,7 +42,7 @@ A future frontend can talk to the Flask backend at `http://localhost:5050`, but 
 | `GET` | `/api/run/status` | Snapshot of run state (JSON) |
 | `GET` | `/api/run/stream` | SSE stream — emits `{type:"log", line:"..."}` and `{type:"status", event:"...", ...}` |
 
-**SSE event shapes (for a future protected bridge only):**
+**SSE event shapes for the protected bridge:**
 
 ```jsonc
 // Log line
@@ -109,7 +109,7 @@ config/
   gps-locator.yaml          # real GPS config (git-ignored if you add it)
   dashboard.yaml            # dashboard run config (auto-created on first save)
 dashboard/
-  app.py                    # Safety-gated Flask backend; no direct start bridge
+  app.py                    # Safety-gated Flask backend and local RunIntent bridge
   static/                   # Optional future status UI
 logs/                       # runtime logs (git-ignored except .gitkeep)
 routes/

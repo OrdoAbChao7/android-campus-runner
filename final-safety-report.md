@@ -22,7 +22,7 @@ CAPTCHA.
 | Unsafe GPS readiness/shutdown | `simulationActive: true` is not ready; only a provider with successful `stop_verified()` qualifies as a safe shutdown. | `tests/test_safety_audit_closure.py` and `tests/test_workflow_cleanup.py`. |
 | Replay after restart | `IntentUseRegistry` accepts an injected `IntentUseStore`; production uses a SQLite store at `logs/intent-use.sqlite3` or `ANDROID_RUNNER_INTENT_STORE`. Consumption is atomic and durable. Store failure or a volatile registry is rejected before provider/UI work. | `tests/test_intent_store.py`. |
 | Missing execution evidence | Both runner entrypoints create a unique run-id `EvidenceWriter`/`StateMachine` session before provider/UI work and return paths to a sanitized `summary.json`. Evidence failure is fail-closed. | `tests/test_runner_evidence.py`. |
-| Misleading public status | README, CLI help/output, dashboard start response, and dashboard status now say that direct Campus Run start is intentionally unavailable without a bridge. | `tests/test_cli_route.py` and `tests/test_dashboard_security_static.py`. |
+| Misleading public status | README, CLI help/output, dashboard authorization response, and dashboard status distinguish the guarded bridge from unsupported direct CLI start. | `tests/test_cli_route.py` and `tests/test_dashboard_security_static.py`. |
 
 ## Artifacts and operating rules
 
@@ -31,7 +31,7 @@ CAPTCHA.
 - Dashboard status includes `intent_bridge_available: true` and
   `direct_campus_run_start_available: true`; start still requires a captured
   single-use intent and matching route/serial.
-- A future bridge must issue/register the full immutable intent in the durable
+- The local bridge issues/registers the full immutable intent in the durable
   store; it must not replace a persistence failure with an in-memory registry.
 
 ## Verification record
@@ -45,7 +45,7 @@ Focused commits:
 5. `fc1aba1` — durable intent replay protection
 6. `95e39f4` — runner state/evidence summaries
 
-Final verification: `pytest -q` — `130 passed, 3 skipped`.
+Final verification: `pytest -q` — `133 passed, 3 skipped`.
 
 ## Remaining boundaries
 
@@ -55,5 +55,5 @@ Final verification: `pytest -q` — `130 passed, 3 skipped`.
 - No real device, WeCom session, GPS provider, login/logout, OTP, or CAPTCHA
   flow was exercised. The repository intentionally does not provide those as
   an unauthorised direct-start path.
-- The public dashboard and CLI remain non-starting until a separately reviewed
-  external RunIntent bridge is supplied.
+- The CLI remains non-starting; the local dashboard bridge requires the
+  explicit two-step authorization flow and a live WeCom start checkpoint.
