@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from enum import Enum, auto
-from typing import Callable, Optional
+from pathlib import Path
+from typing import Callable
+
+from ..device import UnsafeWeComCheckpoint, WeComCheckpoint, WeComPage
 
 
 class AccountSwitchState(Enum):
@@ -33,49 +36,58 @@ class AccountSwitcher:
         return self.state
 
 
-class SafeAccountSwitcher(AccountSwitcher):
-    """Config-driven switch hook that never logs out without explicit opt-in.
-
-    WeCom exposes account switching through its login/logout UI.  Since a logout
-    can invalidate the current session, the runner defaults to an ABORT state
-    until the caller supplies an explicit target selector and an opt-in
-    ``allow_logout`` callback.
-    """
+class WeComEnterpriseSwitcher(AccountSwitcher):
+    """Switch among already-logged-in WeCom enterprises without logout."""
 
     def __init__(
         self,
-        open_switcher: Callable[[], None],
-        select_target: Callable[[], None],
-        verify: Callable[[], bool],
+        device,
+        target: str,
         *,
-        allow_logout: Optional[Callable[[], bool]] = None,
+        current: str | None = None,
+        logged_in_enterprises: tuple[str, ...] | list[str],
+        checkpoint_directory: Path = Path("logs/checkpoints"),
     ):
-        super().__init__(open_switcher, select_target, verify)
-        self.allow_logout = allow_logout
+        self.device = device
+        self.target = target.strip()
+        self.current = current.strip() if current else None
+        self.logged_in_enterprises = frozenset(
+            enterprise.strip() for enterprise in logged_in_enterprises
+            if isinstance(enterprise, str) and enterprise.strip()
+        )
+        self.checkpoint_directory = Path(checkpoint_directory)
+        super().__init__(self._open, self._select, self._verify)
 
     def switch(self) -> AccountSwitchState:
-        if self.allow_logout is None or not self.allow_logout():
+        if (
+            not self.target
+            or not self.current
+            or self.target == self.current
+            or self.current not in self.logged_in_enterprises
+            or self.target not in self.logged_in_enterprises
+        ):
             self.state = AccountSwitchState.ABORT
             return self.state
         return super().switch()
 
-
-class WeComEnterpriseSwitcher(SafeAccountSwitcher):
-    """Switch among already-logged-in WeCom enterprises without logout."""
-
-    def __init__(self, device, target: str, *, current: str | None = None):
-        self.device = device
-        self.target = target.strip()
-        self.current = current.strip() if current else None
-        super().__init__(self._open, self._select, self._verify, allow_logout=lambda: True)
+    def _checkpoint(self, expected_page: WeComPage) -> WeComCheckpoint:
+        capture = getattr(self.device, "capture_wecom_checkpoint", None)
+        if not callable(capture):
+            raise UnsafeWeComCheckpoint("device does not support WeCom checkpoints")
+        checkpoint = capture(self.checkpoint_directory)
+        if not isinstance(checkpoint, WeComCheckpoint):
+            raise UnsafeWeComCheckpoint("invalid WeCom checkpoint")
+        checkpoint.require_page(expected_page)
+        return checkpoint
 
     def _open(self) -> None:
+        self._checkpoint(WeComPage.ACCOUNT_HOME)
         self.device.click(resource_id="com.tencent.wework:id/nts")
 
     def _select(self) -> None:
-        if not self.target or self.target == self.current:
-            raise ValueError("target enterprise must differ from current enterprise")
+        self._checkpoint(WeComPage.ACCOUNT_SWITCHER)
         self.device.click(text=self.target)
 
     def _verify(self) -> bool:
+        self._checkpoint(WeComPage.ACCOUNT_HOME)
         return self.device.wait_text(self.target, timeout=5)

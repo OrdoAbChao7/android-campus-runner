@@ -53,9 +53,23 @@ def run_route_with_cleanup(provider: RouteProvider, route: Path) -> bool:
     return route_ok and stopped
 
 
-def run_route_then_switch(provider: RouteProvider, route: Path, switcher) -> AccountSwitchState:
-    """Run and clean up a route, then switch accounts only after success."""
+def run_route_then_switch(
+    provider: RouteProvider,
+    route: Path,
+    switcher,
+    *,
+    app_result_verified: Callable[[], bool] | None = None,
+) -> AccountSwitchState:
+    """Switch only after independent app-result proof and verified provider shutdown."""
     if not run_route_with_cleanup(provider, route):
+        return AccountSwitchState.ABORT
+    if app_result_verified is None:
+        return AccountSwitchState.ABORT
+    try:
+        if not app_result_verified():
+            return AccountSwitchState.ABORT
+    except Exception:
+        log.warning("app result verification failed", exc_info=True)
         return AccountSwitchState.ABORT
     return switcher.switch()
 
@@ -110,6 +124,7 @@ def run_multi_account(
     intent_registry: IntentUseRegistry | None = None,
     reservation: IntentReservation | None = None,
     action_id: str = "campus_run.start",
+    app_result_verified_fn: Callable[[str], bool] | None = None,
 ) -> MultiRunResult:
     """Run each account only after consuming its registered start authorization."""
     if not accounts:
@@ -184,6 +199,21 @@ def run_multi_account(
             # Switch to next account if there are more runs to do.
             if i < len(accounts) - 1:
                 next_account = accounts[i + 1]
+                if app_result_verified_fn is None:
+                    log.error("missing app-result proof; refusing account switch")
+                    result.failed.extend(accounts[i + 1:])
+                    result.state = RunState.SAFE_STOP
+                    break
+                try:
+                    app_result_verified = bool(app_result_verified_fn(account))
+                except Exception:
+                    log.warning("app result verification failed for account: %s", account, exc_info=True)
+                    app_result_verified = False
+                if not app_result_verified:
+                    log.error("app result verification failed; refusing account switch")
+                    result.failed.extend(accounts[i + 1:])
+                    result.state = RunState.SAFE_STOP
+                    break
                 log.info("switching account: %s -> %s", account, next_account)
                 switched = switch_account_fn(next_account)
                 if not switched:

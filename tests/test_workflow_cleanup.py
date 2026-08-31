@@ -2,7 +2,7 @@ from pathlib import Path
 
 from android_runner.state import RunState
 from android_runner.workflow import run_route_with_cleanup, run_route_then_switch, run_multi_account
-from android_runner.wecom.account import AccountSwitchState, SafeAccountSwitcher
+from android_runner.wecom.account import AccountSwitchState, AccountSwitcher
 
 
 class Provider:
@@ -25,9 +25,23 @@ class SuccessProvider:
 
 def test_switch_happens_only_after_successful_route():
     provider = SuccessProvider()
-    switcher = SafeAccountSwitcher(lambda: None, lambda: None, lambda: True)
+    switcher = AccountSwitcher(lambda: None, lambda: None, lambda: True)
     assert run_route_then_switch(provider, Path("route.gpx"), switcher) is AccountSwitchState.ABORT
     assert provider.calls == ["start", "stop"]
+
+
+def test_switch_requires_explicit_verified_app_result_after_verified_provider_stop():
+    provider = SuccessProvider()
+    calls = []
+    switcher = AccountSwitcher(lambda: calls.append("open"), lambda: calls.append("select"), lambda: True)
+
+    state = run_route_then_switch(
+        provider, Path("route.gpx"), switcher, app_result_verified=lambda: True,
+    )
+
+    assert state is AccountSwitchState.READY
+    assert provider.calls == ["start", "stop"]
+    assert calls == ["open", "select"]
 
 
 def test_failed_verified_stop_blocks_completion_and_enters_safe_stop():

@@ -2,10 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Callable
 
 from .intent import IntentReservation, IntentUseRegistry, RunIntent, RunObservation
 from .state import RunState
-from .wecom.campus_run import CampusRunState, confirm_free_run, open_campus_run
+from .wecom.campus_run import (
+    CampusRunState,
+    capture_start_prompt_checkpoint,
+    confirm_free_run,
+    open_campus_run,
+)
 from .wecom.account import AccountSwitchState, WeComEnterpriseSwitcher
 from .workflow import MultiRunResult, run_multi_account, run_route_then_switch
 
@@ -115,6 +121,7 @@ def run_mvp(
     observation: RunObservation | None = None,
     intent_registry: IntentUseRegistry | None = None,
     action_id: str = "campus_run.start",
+    app_result_verified: Callable[[], bool] | None = None,
 ) -> MvpRunResult:
     """Execute the authorized MVP flow, stopping safely at the start prompt by default."""
     reservation: IntentReservation | None = None
@@ -140,6 +147,7 @@ def run_mvp(
         if reservation is None:
             return MvpRunResult(state, state=_cleanup_state(provider))
         try:
+            start_checkpoint = capture_start_prompt_checkpoint(device)
             confirm_free_run(
                 device,
                 intent=intent,
@@ -147,10 +155,13 @@ def run_mvp(
                 intent_registry=intent_registry,
                 reservation=reservation,
                 action_id=action_id,
+                start_checkpoint=start_checkpoint,
             )
         except Exception:
             return MvpRunResult(state, state=_cleanup_state(provider))
-        account_state = run_route_then_switch(provider, route, switcher)
+        account_state = run_route_then_switch(
+            provider, route, switcher, app_result_verified=app_result_verified,
+        )
         run_state = RunState.SAFE_STOP if account_state is AccountSwitchState.ABORT else RunState.IDLE
         return MvpRunResult(CampusRunState.RUNNING, account_state, run_state)
     finally:
@@ -165,8 +176,10 @@ def run_multi_account_mvp(
     accounts: list[str],
     *,
     current_account: str | None = None,
+    logged_in_enterprises: tuple[str, ...] | list[str] | None = None,
     intents: dict[str, tuple[RunIntent, RunObservation]] | None = None,
     intent_registry: IntentUseRegistry | None = None,
+    app_result_verified_fn: Callable[[str], bool] | None = None,
 ) -> MultiRunResult:
     """Run campus-run sequentially for every account in *accounts*.
 
@@ -179,6 +192,9 @@ def run_multi_account_mvp(
 
     *current_account* is the enterprise name currently active on the device.
     Omit it when there is only one account or you do not need the guard.
+
+    *logged_in_enterprises* is the explicit, operator-provided list of
+    enterprises already logged in on the device. Without it, switching aborts.
     """
     if not accounts:
         return MultiRunResult()
@@ -219,24 +235,37 @@ def run_multi_account_mvp(
         _current_ref: list[str | None] = [current_account]
 
         def switch_to(next_enterprise: str) -> bool:
-            switcher = WeComEnterpriseSwitcher(device, target=next_enterprise, current=_current_ref[0])
+            switcher = WeComEnterpriseSwitcher(
+                device,
+                target=next_enterprise,
+                current=_current_ref[0],
+                logged_in_enterprises=tuple(logged_in_enterprises or ()),
+            )
             state = switcher.switch()
             ok = state is AccountSwitchState.READY
             if ok:
                 _current_ref[0] = next_enterprise
             return ok
 
+        def confirm_with_checkpoint(_device, **kwargs):
+            return confirm_free_run(
+                _device,
+                start_checkpoint=capture_start_prompt_checkpoint(_device),
+                **kwargs,
+            )
+
         return run_multi_account(
             provider=provider,
             route=route,
             accounts=accounts,
             open_campus_run_fn=open_campus_run,
-            confirm_free_run_fn=confirm_free_run,
+            confirm_free_run_fn=confirm_with_checkpoint,
             switch_account_fn=switch_to,
             device=device,
             intents=intents,
             intent_registry=intent_registry,
             reservation=reservation,
+            app_result_verified_fn=app_result_verified_fn,
         )
     finally:
         intent_registry.release_reservation(reservation)

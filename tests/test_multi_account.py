@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from android_runner import runner
+from android_runner.device import WeComCheckpoint, WeComPage
 from android_runner.intent import IntentReplayError, IntentUseRegistry, RunIntent, RunObservation, route_sha256
 from android_runner.wecom.campus_run import CampusRunState
 from android_runner.workflow import MultiRunResult, run_multi_account
@@ -31,6 +32,15 @@ class Device:
 
     def wait_text(self, text, timeout=10):
         return True
+
+    def capture_wecom_checkpoint(self, _directory):
+        return WeComCheckpoint(
+            screenshot_path=Path("screen.png"), hierarchy_path=Path("page.xml"),
+            captured_at=datetime.now(timezone.utc), foreground_package="com.tencent.wework",
+            foreground_activity="com.tencent.wework.launch.WwMainActivity", adb_serial="PHONE",
+            device_fingerprint="fingerprint", page_fingerprint="a" * 64,
+            page=WeComPage.START_PROMPT,
+        )
 
 
 class Provider:
@@ -96,6 +106,7 @@ def _run_multi_authorized(**kwargs):
             intents=intents,
             intent_registry=registry,
             reservation=reservation,
+            app_result_verified_fn=lambda _account: True,
         )
     finally:
         registry.release_reservation(reservation)
@@ -262,6 +273,27 @@ def test_multi_account_switch_failure_aborts_remaining():
     assert result.completed == ["企业A"]
     assert set(result.failed) == {"企业B", "企业C"}
     assert provider.calls[-1] == "stop"
+
+
+def test_multi_account_missing_app_result_proof_aborts_without_switching():
+    provider = Provider()
+    switches: list[str] = []
+    intents, registry = _start_authorizations(["企业A", "企业B"])
+    reservation = registry.reserve_batch([intents["企业A"][0], intents["企业B"][0]])
+    try:
+        result = run_multi_account(
+            provider=provider, route=Path("route.gpx"), accounts=["企业A", "企业B"],
+            open_campus_run_fn=_make_fns()[0], confirm_free_run_fn=_make_fns()[1],
+            switch_account_fn=lambda name: switches.append(name) or True, device=Device(),
+            intents=intents, intent_registry=registry, reservation=reservation,
+        )
+    finally:
+        registry.release_reservation(reservation)
+
+    assert result.completed == ["企业A"]
+    assert result.failed == ["企业B"]
+    assert result.state is RunState.SAFE_STOP
+    assert switches == []
 
 
 def test_multi_account_open_failure_aborts():
@@ -512,7 +544,7 @@ def test_mvp_multi_account_full_flow(monkeypatch, tmp_path):
     class FakeSwitcher:
         from android_runner.wecom.account import AccountSwitchState as _S
 
-        def __init__(self, device, target, current=None):
+        def __init__(self, device, target, current=None, **_kwargs):
             self.target = target
 
         def switch(self):
@@ -543,8 +575,10 @@ def test_mvp_multi_account_full_flow(monkeypatch, tmp_path):
         route=route,
         accounts=["企业A", "企业B"],
         current_account="企业A",
+        logged_in_enterprises=("企业A", "企业B"),
         intents=intents,
         intent_registry=registry,
+        app_result_verified_fn=lambda _account: True,
     )
 
     assert result.completed == ["企业A", "企业B"]

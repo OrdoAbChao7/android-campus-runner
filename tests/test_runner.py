@@ -2,9 +2,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from android_runner import runner
+from android_runner.device import WeComCheckpoint, WeComPage
 from android_runner.intent import IntentReplayError, IntentUseRegistry, RunIntent, RunObservation, route_sha256
 from android_runner.state import RunState
-from android_runner.wecom.account import AccountSwitchState, SafeAccountSwitcher
+from android_runner.wecom.account import AccountSwitchState, AccountSwitcher
 from android_runner.wecom.campus_run import CampusRunState
 
 
@@ -13,6 +14,14 @@ class Device:
     def start_app(self, package): pass
     def click(self, **kwargs): self.clicks.append(kwargs)
     def wait_text(self, text, timeout=10): return True
+    def capture_wecom_checkpoint(self, _directory):
+        return WeComCheckpoint(
+            screenshot_path=Path("screen.png"), hierarchy_path=Path("page.xml"),
+            captured_at=datetime.now(timezone.utc), foreground_package="com.tencent.wework",
+            foreground_activity="com.tencent.wework.launch.WwMainActivity", adb_serial="PHONE",
+            device_fingerprint="fingerprint", page_fingerprint="a" * 64,
+            page=WeComPage.START_PROMPT,
+        )
 
 
 class Provider:
@@ -24,7 +33,7 @@ class Provider:
 
 def test_mvp_stops_at_prompt_by_default(monkeypatch):
     monkeypatch.setattr(runner, "open_campus_run", lambda device: CampusRunState.START_PROMPT)
-    result = runner.run_mvp(Device(), Provider(), Path("route.gpx"), SafeAccountSwitcher(lambda: None, lambda: None, lambda: True))
+    result = runner.run_mvp(Device(), Provider(), Path("route.gpx"), AccountSwitcher(lambda: None, lambda: None, lambda: True))
     assert result.campus_state is CampusRunState.START_PROMPT
     assert result.account_state is None
 
@@ -33,7 +42,7 @@ def test_mvp_runs_route_then_switches_when_authorized(monkeypatch, tmp_path):
     monkeypatch.setattr(runner, "open_campus_run", lambda device: CampusRunState.START_PROMPT)
     monkeypatch.setattr(runner, "confirm_free_run", lambda device, **kwargs: CampusRunState.RUNNING)
     provider = Provider()
-    switcher = SafeAccountSwitcher(lambda: None, lambda: None, lambda: True, allow_logout=lambda: True)
+    switcher = AccountSwitcher(lambda: None, lambda: None, lambda: True)
     route = tmp_path / "route.gpx"
     route.write_text("route", encoding="utf-8")
     now = datetime.now(timezone.utc)
@@ -47,7 +56,8 @@ def test_mvp_runs_route_then_switches_when_authorized(monkeypatch, tmp_path):
     registry = IntentUseRegistry()
     registry.register(intent)
     result = runner.run_mvp(Device(), provider, route, switcher, intent=intent,
-                            observation=observation, intent_registry=registry)
+                            observation=observation, intent_registry=registry,
+                            app_result_verified=lambda: True)
     assert result.campus_state is CampusRunState.RUNNING
     assert result.account_state is AccountSwitchState.READY
     assert provider.calls == ["prepare", "route", "stop"]
@@ -80,7 +90,7 @@ def test_mvp_authorized_run_reserves_before_ui_and_releases_on_ui_failure(monkey
     monkeypatch.setattr(runner, "open_campus_run", open_campus_run)
     monkeypatch.setattr(runner, "confirm_free_run", lambda _device, **_kwargs: (_ for _ in ()).throw(RuntimeError("UI fingerprint mismatch")))
     result = runner.run_mvp(
-        Device(), Provider(), route, SafeAccountSwitcher(lambda: None, lambda: None, lambda: True),
+        Device(), Provider(), route, AccountSwitcher(lambda: None, lambda: None, lambda: True),
         intent=intent, observation=observation, intent_registry=registry,
     )
 
@@ -95,7 +105,7 @@ def test_mvp_cleans_up_when_readiness_fails(monkeypatch):
     monkeypatch.setattr(runner, "confirm_free_run", lambda device, **kwargs: CampusRunState.RUNNING)
     provider = Provider()
     provider.ready = lambda: False
-    result = runner.run_mvp(Device(), provider, Path("route.gpx"), SafeAccountSwitcher(lambda: None, lambda: None, lambda: True))
+    result = runner.run_mvp(Device(), provider, Path("route.gpx"), AccountSwitcher(lambda: None, lambda: None, lambda: True))
     assert result.account_state is None
     assert provider.calls == ["prepare", "stop"]
 
@@ -106,7 +116,7 @@ def test_mvp_checks_provider_before_opening_start_prompt(monkeypatch):
     provider = Provider()
     provider.ready = lambda: observed.append("ready") or False
 
-    runner.run_mvp(Device(), provider, Path("route.gpx"), SafeAccountSwitcher(lambda: None, lambda: None, lambda: True))
+    runner.run_mvp(Device(), provider, Path("route.gpx"), AccountSwitcher(lambda: None, lambda: None, lambda: True))
 
     assert observed == ["ready"]
     assert provider.calls == ["prepare", "stop"]
@@ -119,7 +129,7 @@ def test_mvp_never_confirms_free_run_without_single_use_intent(monkeypatch):
     provider = Provider()
     provider.ready = lambda: True
 
-    result = runner.run_mvp(Device(), provider, Path("route.gpx"), SafeAccountSwitcher(lambda: None, lambda: None, lambda: True))
+    result = runner.run_mvp(Device(), provider, Path("route.gpx"), AccountSwitcher(lambda: None, lambda: None, lambda: True))
 
     assert result.campus_state is CampusRunState.START_PROMPT
     assert clicks == []
@@ -130,7 +140,7 @@ def test_mvp_rejects_removed_allow_start_bypass():
     with __import__("pytest").raises(TypeError):
         runner.run_mvp(
             Device(), Provider(), Path("route.gpx"),
-            SafeAccountSwitcher(lambda: None, lambda: None, lambda: True), allow_start=True,
+            AccountSwitcher(lambda: None, lambda: None, lambda: True), allow_start=True,
         )
 
 
@@ -143,7 +153,7 @@ def test_mvp_cleanup_verification_failure_returns_safe_stop(monkeypatch):
 
     result = runner.run_mvp(
         Device(), UnsafeProvider(), Path("route.gpx"),
-        SafeAccountSwitcher(lambda: None, lambda: None, lambda: True),
+        AccountSwitcher(lambda: None, lambda: None, lambda: True),
     )
 
     assert result.state is RunState.SAFE_STOP
@@ -169,7 +179,7 @@ def test_mvp_verified_stop_failure_after_authorized_route_returns_safe_stop(monk
     registry = IntentUseRegistry()
     registry.register(intent)
     result = runner.run_mvp(
-        Device(), UnsafeProvider(), route, SafeAccountSwitcher(lambda: None, lambda: None, lambda: True),
+        Device(), UnsafeProvider(), route, AccountSwitcher(lambda: None, lambda: None, lambda: True),
         intent=intent,
         observation=RunObservation("PHONE", "fingerprint", route_sha256(route), now),
         intent_registry=registry,
