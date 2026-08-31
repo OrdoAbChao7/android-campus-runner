@@ -48,3 +48,12 @@ Verification after this fix round: `python -m py_compile dashboard/app.py` and `
 - `run_multi_account_mvp()` similarly returns `SAFE_STOP` before provider preparation when intents are absent; no prompt or confirmation can occur.
 
 Verification after this fix round: `python -m py_compile dashboard/app.py` and `pytest -q` completed with `80 passed, 1 skipped`.
+
+## Fix round 4 — multi-account authorization preflight
+
+- Added a runner-layer preflight before `provider.prepare()`/`ready()` or any WeCom UI action.
+- Every requested account must have a two-item `(RunIntent, RunObservation)` tuple with the expected types, matching `current_enterprise` and `target_enterprise`, and a valid action binding.
+- Missing accounts, empty/`None` pairs, malformed or wrong-typed values, unusable registries, and enterprise mismatches now return `SAFE_STOP` with a clear authorization message and leave provider/device state untouched.
+- Added parametrized regressions covering each invalid binding and asserting zero provider/UI side effects.
+
+Verification: `pytest -q` completed with `85 passed, 1 skipped`.

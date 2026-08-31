@@ -29,6 +29,44 @@ def _cleanup_state(provider) -> RunState:
     return RunState.IDLE if _stop_safely(provider) else RunState.SAFE_STOP
 
 
+def _validate_multi_account_authorization(
+    accounts: list[str],
+    intents: dict[str, tuple[RunIntent, RunObservation]] | None,
+    intent_registry: IntentUseRegistry | None,
+    *,
+    action_id: str = "campus_run.start",
+) -> str | None:
+    """Validate every account binding before touching the provider or device UI."""
+    if not isinstance(intent_registry, IntentUseRegistry) or not callable(
+        getattr(intent_registry, "consume", None)
+    ):
+        return "invalid RunIntent authorization: intent_registry is not usable"
+    if not isinstance(intents, dict):
+        return "invalid RunIntent authorization: account intent mapping is missing"
+
+    invalid: list[str] = []
+    for account in accounts:
+        binding = intents.get(account)
+        if not isinstance(binding, tuple) or len(binding) != 2:
+            invalid.append(f"{account} (missing or malformed binding)")
+            continue
+        intent, observation = binding
+        if not isinstance(intent, RunIntent) or not isinstance(observation, RunObservation):
+            invalid.append(f"{account} (RunIntent/RunObservation required)")
+            continue
+        if intent.current_enterprise != account or intent.target_enterprise != account:
+            invalid.append(f"{account} (enterprise binding mismatch)")
+            continue
+        try:
+            intent.validate(observation, action_id)
+        except Exception as exc:
+            invalid.append(f"{account} ({exc})")
+
+    if invalid:
+        return "invalid RunIntent authorization before provider/UI actions: " + "; ".join(invalid)
+    return None
+
+
 def run_mvp(
     device,
     provider,
@@ -88,11 +126,14 @@ def run_multi_account_mvp(
     """
     if not accounts:
         return MultiRunResult()
-    if not intents or intent_registry is None:
+    authorization_error = _validate_multi_account_authorization(
+        accounts, intents, intent_registry,
+    )
+    if authorization_error is not None:
         return MultiRunResult(
             failed=list(accounts),
             state=RunState.SAFE_STOP,
-            message="external single-use RunIntent authorization is required; no Campus Run action was started",
+            message=authorization_error,
         )
 
     # Prepare the GPS provider once before any runs start.

@@ -310,6 +310,52 @@ def test_mvp_multi_account_without_intents_refuses_before_provider_or_ui():
     assert provider.calls == []
 
 
+@pytest.mark.parametrize("case", ["missing_account", "none_pair", "wrong_types", "mismatch", "bad_registry"])
+def test_mvp_multi_account_invalid_authorization_preflight_has_no_side_effects(case, tmp_path):
+    route = tmp_path / "route.gpx"
+    route.write_text("route", encoding="utf-8")
+    now = datetime.now(timezone.utc)
+    registry = IntentUseRegistry()
+
+    def auth(account, *, current=None, target=None):
+        intent = RunIntent(
+            intent_id=f"intent-{account}", adb_serial="PHONE", device_fingerprint="fingerprint",
+            current_enterprise=current or account, target_enterprise=target or account,
+            route_sha256=route_sha256(route), not_before=now - timedelta(minutes=1),
+            not_after=now + timedelta(minutes=1), max_duration=timedelta(minutes=30),
+            allowed_action_ids={"campus_run.start"},
+        )
+        registry.register(intent)
+        return intent, RunObservation("PHONE", "fingerprint", route_sha256(route), now)
+
+    intents = {"企业A": auth("企业A")}
+    if case == "missing_account":
+        pass
+    elif case == "none_pair":
+        intents["企业B"] = (None, None)
+    elif case == "wrong_types":
+        intents["企业B"] = (object(), object())
+    elif case == "mismatch":
+        intents["企业B"] = auth("企业B", current="企业A", target="企业A")
+    elif case == "bad_registry":
+        registry = object()
+
+    provider = Provider()
+    device = Device()
+    result = runner.run_multi_account_mvp(
+        device=device, provider=provider, route=route, accounts=["企业A", "企业B"],
+        intents=intents, intent_registry=registry,
+    )
+
+    assert result.state is RunState.SAFE_STOP
+    assert result.failed == ["企业A", "企业B"]
+    assert result.completed == []
+    assert result.message and "authorization" in result.message.lower()
+    assert provider.calls == []
+    assert device.started_apps == []
+    assert device.clicks == []
+
+
 def test_mvp_multi_account_cleanup_failure_returns_safe_stop():
     class BadProvider(Provider):
         def prepare(self):
