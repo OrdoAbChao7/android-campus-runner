@@ -1,3 +1,9 @@
+<div align="center">
+  <h1>Android Campus Runner</h1>
+  <b>English</b> | <a href="./README_zh-CN.md"><b>中文</b></a>
+</div>
+<br>
+
 # Android Runner
 
 Windows + Android ADB automation components for supervised WeCom campus-run
